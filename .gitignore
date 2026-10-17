@@ -17,6 +17,9 @@ out/
 *.blockmap
 *.zip
 
+# voiceprint test: generated TTS audio samples
+tools/voiceprint-test/audio/
+
 # macOS
 .DS_Store
 

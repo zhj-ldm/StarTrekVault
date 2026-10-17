@@ -279,6 +279,13 @@ app.on('before-quit', (event) => {
 
 /* ---------------------------------------------------------------------- IPC */
 
+/* Default container store: <Documents>/startrek vault (created on demand). */
+function vaultsHome() {
+  const dir = path.join(app.getPath('documents'), 'startrek vault');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* best effort */ }
+  return dir;
+}
+
 ipcMain.handle('stvault:rpc', (event, payload) => {
   const method = payload && payload.method ? String(payload.method) : '';
   const params = (payload && payload.params) || {};
@@ -300,11 +307,24 @@ ipcMain.handle('stvault:pick-vault-path', async (event, payload) => {
   const name = (payload && payload.name) ? String(payload.name) : 'VAULT.stvault';
   const result = await dialog.showSaveDialog(win, {
     title: 'CREATE VAULT CONTAINER',
-    defaultPath: path.join(app.getPath('documents'), name),
+    defaultPath: path.join(vaultsHome(), name),
     filters: [{ name: 'Star Trek Vault', extensions: ['stvault'] }],
     properties: ['createDirectory']
   });
   return result.canceled || !result.filePath ? null : result.filePath;
+});
+
+ipcMain.handle('stvault:pick-stvault-file', async () => {
+  const result = await dialog.showOpenDialog(win, {
+    title: 'IMPORT VAULT CONTAINER',
+    defaultPath: vaultsHome(),
+    properties: ['openFile'],
+    filters: [{ name: 'Star Trek Vault', extensions: ['stvault'] }]
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true };
+  }
+  return { canceled: false, path: result.filePaths[0], dest_dir: vaultsHome() };
 });
 
 ipcMain.handle('stvault:pick-files', async (event, payload) => {

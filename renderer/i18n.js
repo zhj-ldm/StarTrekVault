@@ -68,6 +68,8 @@
 
     /* vault list */
     'CREATE NEW VAULT': '创建新保险箱',
+    'IMPORT VAULT': '导入保险箱',
+    'IMPORTING...': '导入中...',
     'REFRESH': '刷新',
     'SCANNING...': '扫描中...',
     'NAME': '名称',
@@ -105,8 +107,12 @@
     'LANGUAGE': '语言',
     'SELECT INTERFACE LANGUAGE. DEFAULT IS ENGLISH.': '选择界面语言。默认英文。',
     'ENGLISH': '英文',
+    'AUTO-LOCK ON IDLE': '空闲自动上锁',
+    'WHEN ENABLED, THE VAULT AUTOMATICALLY LOCKS AND RETURNS TO THE MAIN PAGE AFTER THE SET NUMBER OF MINUTES WITHOUT ANY ACTIVITY.': '开启后，无任何操作达到设定分钟数时，保险箱会自动上锁并返回主页面。',
+    'ENABLE AUTO-LOCK': '启用自动上锁',
+    'IDLE MINUTES (1 - 240)': '空闲分钟数（1 - 240）',
     'VOICEPRINT MATCH THRESHOLD': '声纹匹配阈值',
-    'SIMILARITY THRESHOLD USED FOR VOICEPRINT VERIFICATION. VALID RANGE 0.10 TO 0.90.': '用于声纹验证的相似度阈值。有效范围 0.10 至 0.90。',
+    'SIMILARITY THRESHOLD USED FOR VOICEPRINT VERIFICATION. VALID RANGE 0.40 TO 0.90.': '用于声纹验证的相似度阈值。有效范围 0.40 至 0.90。',
     'APPLY': '应用',
     'APPLYING...': '应用中...',
     'RECOVERY AND DESTRUCTION': '恢复与销毁',
@@ -181,6 +187,11 @@
     /* confirmation dialogs */
     'DELETE VAULT': '删除保险箱',
     'THE CONTAINER "{name}" WILL BE OVERWRITTEN THREE TIMES AND REMOVED. THIS CANNOT BE UNDONE. PROCEED?': '容器“{name}”将被覆写三次并移除，且无法撤销。是否继续？',
+    /* four-step vault deletion confirmation */
+    'DELETE VAULT - CONFIRMATION {n} OF {m}': '删除保险箱 - 第 {n} 次确认（共 {m} 次）',
+    'CONFIRM {n}/{m}': '确认 {n}/{m}',
+    'CONFIRMATION {n} OF {m}. THE CONTAINER "{name}" WILL BE OVERWRITTEN THREE TIMES AND PERMANENTLY REMOVED. THIS CANNOT BE UNDONE. {left} MORE CONFIRMATION(S) STILL REQUIRED AFTER THIS.': '第 {n} 次确认（共 {m} 次）。容器“{name}”将被覆写三次并永久移除，且无法撤销。本次确认后，仍需再确认 {left} 次。',
+    'FINAL CONFIRMATION. THE CONTAINER "{name}" WILL NOW BE OVERWRITTEN THREE TIMES AND PERMANENTLY REMOVED. THIS CANNOT BE UNDONE. PROCEED?': '最终确认。容器“{name}”将被覆写三次并永久移除，且无法撤销。是否继续？',
     'EXECUTE WIPE': '执行擦除',
     'SYSTEM WIPE IRREVERSIBLY DESTROYS EVERY VAULT CONTAINER, THE GLOBAL CONFIGURATION AND THE AUDIT LOG. THREE PASS OVERWRITE RUNS FIRST. THIS CANNOT BE UNDONE. PROCEED?': '系统擦除将不可逆地销毁所有保险箱容器、全局配置与审计日志，并先执行三遍覆写。无法撤销。是否继续？',
 
@@ -193,6 +204,8 @@
     'BACK': '返回',
     'NEW DIRECTORY': '新建目录',
     'NEW FOLDER': '新建文件夹',
+    'NEW FILE': '新建文件',
+    'SAVE': '保存',
     'CUT': '剪切',
     'RENAME': '重命名',
     'COPY': '复制',

@@ -284,6 +284,31 @@
     });
   }
 
+  // Import an external .stvault container. The main process shows a native file
+  // picker and returns the chosen source path plus the default destination
+  // (~/Documents/startrek vault). The backend validates the format and copies it.
+  function onImportVault() {
+    clearError('vaults-error');
+    if (!API || typeof API.pickStvaultFile !== 'function') {
+      showError('vaults-error', 'LCARS LINK OFFLINE');
+      return;
+    }
+    var btn = $('btn-import-vault');
+    setBusy(btn, t('IMPORTING...'));
+    API.pickStvaultFile().then(function (res) {
+      if (!res || res.canceled || !res.path) return null;
+      return invoke('vault.import', { src: res.path, dest_dir: res.dest_dir }).then(function () {
+        return refreshVaults();
+      });
+    }, function (err) {
+      showError('vaults-error', err && err.message ? err.message : String(err));
+    }).catch(function (err) {
+      showError('vaults-error', err && err.message ? err.message : String(err));
+    }).then(function () {
+      clearBusy(btn);
+    });
+  }
+
   function onVaultRowClick(e) {
     var btn = e.target.closest('button[data-act]');
     if (!btn) return;
@@ -313,19 +338,7 @@
       if (recoveryRecorder) recoveryRecorder.reset();
       showView('recovery');
     } else if (act === 'delete') {
-      openConfirm(t('DELETE VAULT'),
-        t('THE CONTAINER "{name}" WILL BE OVERWRITTEN THREE TIMES AND REMOVED. THIS CANNOT BE UNDONE. PROCEED?', { name: name || path }),
-        t('DELETE VAULT'), true, function () {
-          var del = btn;
-          setBusy(del, t('ERASING...'));
-          invoke('vault.delete', { path: path }).then(function () {
-            refreshVaults();
-          }, function (err) {
-            showError('vaults-error', err && err.message ? err.message : String(err));
-          }).then(function () {
-            clearBusy(del);
-          });
-        });
+      confirmVaultDelete(path, name, btn);
     }
   }
 
@@ -358,6 +371,38 @@
 
   function closeModal() {
     $('lcars-modal').classList.remove('is-open');
+  }
+
+  // Deleting a vault is irreversible (three-pass overwrite + removal), so it
+  // requires FOUR sequential confirmations. Each dialog reports the step number
+  // and how many confirmations still remain, to defeat accidental clicks.
+  function confirmVaultDelete(path, name, btn) {
+    var TOTAL = 4;
+    var display = name || path;
+    function step(n) {
+      var left = TOTAL - n;
+      var isFinal = (n === TOTAL);
+      openConfirm(
+        t('DELETE VAULT - CONFIRMATION {n} OF {m}', { n: n, m: TOTAL }),
+        isFinal
+          ? t('FINAL CONFIRMATION. THE CONTAINER "{name}" WILL NOW BE OVERWRITTEN THREE TIMES AND PERMANENTLY REMOVED. THIS CANNOT BE UNDONE. PROCEED?', { name: display })
+          : t('CONFIRMATION {n} OF {m}. THE CONTAINER "{name}" WILL BE OVERWRITTEN THREE TIMES AND PERMANENTLY REMOVED. THIS CANNOT BE UNDONE. {left} MORE CONFIRMATION(S) STILL REQUIRED AFTER THIS.', { n: n, m: TOTAL, left: left, name: display }),
+        isFinal ? t('DELETE VAULT') : t('CONFIRM {n}/{m}', { n: n, m: TOTAL }),
+        true,
+        function () {
+          if (!isFinal) { step(n + 1); return; }
+          var del = btn;
+          setBusy(del, t('ERASING...'));
+          invoke('vault.delete', { path: path }).then(function () {
+            refreshVaults();
+          }, function (err) {
+            showError('vaults-error', err && err.message ? err.message : String(err));
+          }).then(function () {
+            clearBusy(del);
+          });
+        });
+    }
+    step(1);
   }
 
   /* ------------------------------------------------------------ recorder */
@@ -617,6 +662,11 @@
         $('settings-threshold-value').textContent = v.toFixed(2);
       }
       if (s && s.language) applyLanguage(s.language, true);
+      if (s) {
+        $('settings-autolock-enabled').checked = !!s.autolock_enabled;
+        var mins = Number(s.autolock_minutes);
+        if (mins > 0) $('settings-autolock-minutes').value = String(mins);
+      }
     }, function (err) {
       showError('settings-error', err && err.message ? err.message : String(err));
     });
@@ -624,11 +674,18 @@
 
   function onApplySettings() {
     clearError('settings-error');
-    var value = Number($('settings-threshold').value);
+    var value = Math.max(0.4, Math.min(0.9, Number($('settings-threshold').value)));
+    var autoEnabled = !!$('settings-autolock-enabled').checked;
+    var autoMins = Math.max(1, Math.min(240, Math.round(Number($('settings-autolock-minutes').value) || 5)));
     var btn = $('btn-apply-settings');
     setBusy(btn, t('APPLYING...'));
-    invoke('settings.set', { similarity_threshold: value }).then(function () {
+    invoke('settings.set', {
+      similarity_threshold: value,
+      autolock_enabled: autoEnabled,
+      autolock_minutes: autoMins
+    }).then(function () {
       $('settings-threshold-value').textContent = value.toFixed(2);
+      $('settings-autolock-minutes').value = String(autoMins);
     }, function (err) {
       showError('settings-error', err && err.message ? err.message : String(err));
     }).then(function () {
@@ -808,6 +865,7 @@
       createRecorder.reset();
       showView('create');
     });
+    $('btn-import-vault').addEventListener('click', onImportVault);
 
     $('btn-create-cancel').addEventListener('click', function () { showView('vaults'); });
     $('btn-choose-location').addEventListener('click', onChooseLocation);

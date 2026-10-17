@@ -1,0 +1,19 @@
+Voiceprint matching test — EDGE TTS, two different timbres
+Model: resources/models/spk/sv.onnx (same as app)   dim=192   16 kHz mono
+Speaker A = en-US-AriaNeural (female)   Speaker B = en-US-GuyNeural (male)
+
+=== cosine similarity matrix ===
+                A1.f32    A2.f32    B1.f32    B2.f32
+    A1.f32      1.0000    0.8522    0.1256    0.0305
+    A2.f32      0.8522    1.0000    0.0749   -0.0282
+    B1.f32      0.1256    0.0749    1.0000    0.7980
+    B2.f32      0.0305   -0.0282    0.7980    1.0000
+
+=== summary ===
+same-speaker  pairs: n=2  avg=0.8251  min=0.7980
+cross-speaker pairs: n=4  avg=0.0507  max=0.1256
+
+verdict @ threshold 0.6500 (app default): SEPARABLE
+  - same-speaker always above threshold (min 0.7980)
+  - cross-speaker always below threshold (max 0.1256)
+  - margin: ~0.67 between the worst same-speaker and the best cross-speaker

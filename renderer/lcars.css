@@ -54,14 +54,17 @@ html {
 }
 
 body {
-  min-height: 100%;
+  /* Lock the LCARS shell to the viewport so only the middle content area
+     scrolls; the header, rail and footer keep a fixed size. */
+  height: 100%;
+  overflow: hidden;
   background-color: #000;
   font-size: 16px;
   color: #fff;
   font-family: 'Open Sans', sans-serif;
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   grid-template-areas: "header" "nav" "nav-main-sep" "main" "footer";
   padding: .5em;
   --side-bar-width: 5em;
@@ -98,6 +101,8 @@ h1, h2, h3, h4, h5, h6 {
   padding: .5em 2.55em 0;
   color: #99c;
   max-width: 65em;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 #footer {
@@ -253,7 +258,7 @@ button.nav__link {
 @media screen and (min-width: 54em) {
   body {
     grid-template-columns: auto 1fr;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     grid-template-areas: "header header" "nav main" "footer footer";
   }
   .bar--space { background-color: #99f; }

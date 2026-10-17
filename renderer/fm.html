@@ -567,6 +567,19 @@ tr.drag-over td { background-color: #f96 !important; box-shadow: inset 0 0 0 2px
   margin: 0;
 }
 
+/* Editable text box (textarea variant) */
+textarea.fm-preview-text {
+  display: block;
+  width: 100%;
+  min-height: 45vh;
+  max-height: 60vh;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid #99f;
+  outline: none;
+}
+textarea.fm-preview-text:focus { border-color: #f96; }
+
 /* Status bar legacy */
 .fm-statusbar .bar--left { background-color: #6699cc; border-radius: .6em 0 0 .6em; height: 100%; }
 .fm-statusbar .bar--right { background-color: #6699cc; border-radius: 0 .6em .6em 0; height: 100%; }
@@ -963,18 +976,19 @@ var allFiles = [];
 
 // Button definitions with LCARS color variants
 var navButtons = [
-  { label: 'IMPORT',     num: '01', color: '#99f', bgAfter: '#99f' },
-  { label: 'EXPORT',     num: '02', color: '#b8a9cf', bgAfter: '#b8a9cf' },
-  { label: 'REFRESH',    num: '03', color: '#99f', bgAfter: '#99f' },
-  { label: 'BACK',       num: '04', color: '#9b8ccf', bgAfter: '#9b8ccf' },
-  { label: 'NEW FOLDER', num: '05', color: '#99f', bgAfter: '#99f' },
-  { label: 'CUT',        num: '06', color: '#cc9', bgAfter: '#cc9' },
-  { label: 'COPY',       num: '07', color: '#b8a9cf', bgAfter: '#b8a9cf' },
-  { label: 'PASTE',      num: '08', color: '#9b8ccf', bgAfter: '#9b8ccf' },
-  { label: 'RENAME',     num: '09', color: '#99f', bgAfter: '#99f' },
-  { label: 'DELETE',     num: '10', color: '#cc6666', bgAfter: '#cc6666' },
-  { label: 'SEARCH',     num: '11', color: '#99f', bgAfter: '#99f' },
-  { label: 'LOCK',       num: '12', color: '#f90', bgAfter: '#f90' }
+  { label: 'LOCK',       num: '01', color: '#f90',    bgAfter: '#f90' },
+  { label: 'IMPORT',     num: '02', color: '#99f',    bgAfter: '#99f' },
+  { label: 'EXPORT',     num: '03', color: '#b8a9cf', bgAfter: '#b8a9cf' },
+  { label: 'REFRESH',    num: '04', color: '#99f',    bgAfter: '#99f' },
+  { label: 'BACK',       num: '05', color: '#9b8ccf', bgAfter: '#9b8ccf' },
+  { label: 'NEW FOLDER', num: '06', color: '#99f',    bgAfter: '#99f' },
+  { label: 'CUT',        num: '07', color: '#cc9',    bgAfter: '#cc9' },
+  { label: 'COPY',       num: '08', color: '#b8a9cf', bgAfter: '#b8a9cf' },
+  { label: 'PASTE',      num: '09', color: '#9b8ccf', bgAfter: '#9b8ccf' },
+  { label: 'RENAME',     num: '10', color: '#99f',    bgAfter: '#99f' },
+  { label: 'DELETE',     num: '11', color: '#cc6666', bgAfter: '#cc6666' },
+  { label: 'SEARCH',     num: '12', color: '#99f',    bgAfter: '#99f' },
+  { label: 'NEW FILE',   num: '13', color: '#cc9',    bgAfter: '#cc9' }
 ];
 
 function buildNav() {
@@ -993,18 +1007,19 @@ function buildNav() {
 function handleNavClick(idx, e) {
   e.preventDefault(); e.stopPropagation();
   switch (idx) {
-    case 0: handleUpload(); break;      // IMPORT
-    case 1: downloadSelected(); break;  // EXPORT
-    case 2: refreshFiles(); break;      // REFRESH
-    case 3: navigateUp(); break;        // BACK
-    case 4: createDir(); break;         // NEW FOLDER
-    case 5: doCut(); break;             // CUT
-    case 6: doCopy(); break;            // COPY
-    case 7: doPaste(); break;           // PASTE
-    case 8: doRename(); break;          // RENAME
-    case 9: doDelete(); break;          // DELETE
-    case 10: doSearch(); break;         // SEARCH
-    case 11: lockVault(); break;        // LOCK
+    case 0: lockVault(); break;         // LOCK
+    case 1: handleUpload(); break;      // IMPORT
+    case 2: downloadSelected(); break;  // EXPORT
+    case 3: refreshFiles(); break;      // REFRESH
+    case 4: navigateUp(); break;        // BACK
+    case 5: createDir(); break;         // NEW FOLDER
+    case 6: doCut(); break;             // CUT
+    case 7: doCopy(); break;            // COPY
+    case 8: doPaste(); break;           // PASTE
+    case 9: doRename(); break;          // RENAME
+    case 10: doDelete(); break;         // DELETE
+    case 11: doSearch(); break;         // SEARCH
+    case 12: createFile(); break;       // NEW FILE
   }
   return false;
 }
@@ -1335,11 +1350,18 @@ function previewFile(name, idx) {
           [{text:'DOWNLOAD', cls:'fm-btn-ok', onclick:'closeModal();downloadFile(\''+escapeStr(name)+'\')'},{text:'CLOSE', cls:'fm-btn-cancel', onclick:'closeModal()'}]
         );
       } else if (r.text !== undefined) {
-        var trunc = r.truncated ? '\n\n--- File truncated (showing first 100KB) ---' : '';
-        showModal('Preview: ' + name,
-          '<pre class="fm-preview-text">' + escapeHtml(r.text) + trunc + '</pre>',
-          [{text:'DOWNLOAD', cls:'fm-btn-ok', onclick:'closeModal();downloadFile(\''+escapeStr(name)+'\')'},{text:'CLOSE', cls:'fm-btn-cancel', onclick:'closeModal()'}]
-        );
+        // Text-like files (txt, md, json, ...) open in an editable box.
+        var editable = !r.truncated;
+        var editBody = '<textarea class="fm-preview-text" id="fm-edit-text"' +
+          (editable ? '' : ' readonly') + '>' + escapeHtml(r.text) + '</textarea>';
+        if (!editable) {
+          editBody += '<p class="note">File truncated (showing first 100KB) &mdash; editing disabled.</p>';
+        }
+        var editBtns = [];
+        if (editable) editBtns.push({text:'SAVE', cls:'fm-btn-ok', onclick:"saveText('"+escapeStr(name)+"')"});
+        editBtns.push({text:'DOWNLOAD', cls:'fm-btn-ok', onclick:"closeModal();downloadFile('"+escapeStr(name)+"')"});
+        editBtns.push({text:'CLOSE', cls:'fm-btn-cancel', onclick:'closeModal()'});
+        showModal((editable ? 'Open: ' : 'Preview: ') + name, editBody, editBtns);
       } else {
         downloadFile(name);
       }
@@ -1426,6 +1448,42 @@ function confirmDir() {
   xhr.onerror = function() { playSound('error'); };
   xhr.send('path=' + encodeURIComponent(currentPath) + '&name=' + encodeURIComponent(name));
   closeModal();
+}
+
+// ========== CREATE FILE ==========
+// Create a new (empty) text file. The user types the full name including its
+// extension, e.g. "notes.txt" or "readme.md". A name without a dot gets ".txt".
+function createFile() {
+  showModal('New File',
+    '<input type="text" id="modal-input" placeholder="e.g. notes.txt or readme.md" onkeydown="if(event.keyCode===13)confirmFile()">',
+    [ { text: 'CREATE', cls: 'fm-btn-ok', onclick: 'confirmFile()' },
+      { text: 'CANCEL', cls: 'fm-btn-cancel', onclick: 'closeModal()' } ]
+  );
+  setTimeout(function() { var i = document.getElementById('modal-input'); if (i) i.focus(); }, 100);
+  playSound('chirp');
+}
+
+function confirmFile() {
+  var name = document.getElementById('modal-input').value.trim();
+  closeModal();
+  if (!name) return;
+  if (name.indexOf('.') < 0) name += '.txt';
+  if (!window.stvault) { playSound('error'); return; }
+  window.stvault.invoke('vfs.write', { path: currentPath, name: name, text: '' }).then(function() {
+    refreshFiles();
+    playSound('chirp');
+  }).catch(function() { playSound('error'); });
+}
+
+// Save an edited text file back into the container.
+function saveText(name) {
+  var el = document.getElementById('fm-edit-text');
+  if (!el || !window.stvault) return;
+  window.stvault.invoke('vfs.write', { path: currentPath, name: name, text: el.value }).then(function() {
+    closeModal();
+    refreshFiles();
+    playSound('chirp');
+  }).catch(function() { playSound('error'); });
 }
 
 // ========== DELETE ==========

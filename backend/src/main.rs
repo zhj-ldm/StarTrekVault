@@ -40,6 +40,13 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// `.stvault` 容器的默认存放目录：`~/Documents/startrek vault`。
+/// Electron 侧一般会显式传入 `dest_dir`，这里只是缺省兜底。
+fn default_vaults_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").map_err(|_| anyhow!("无法确定用户主目录"))?;
+    Ok(PathBuf::from(home).join("Documents").join("startrek vault"))
+}
+
 // ---------------------------------------------------------------------------
 // 锁定状态机（§七：fail 0→4 播 warning；第 5 次锁定 5 分钟，持久化）
 // ---------------------------------------------------------------------------
@@ -66,6 +73,11 @@ fn default_language() -> String {
     "en".to_string()
 }
 
+/// 默认自动上锁时长（分钟）。
+fn default_autolock_minutes() -> u32 {
+    5
+}
+
 /// Normalise an incoming language tag to one of the supported UI languages.
 fn normalize_language(value: &str) -> String {
     if value.eq_ignore_ascii_case("zh") {
@@ -80,6 +92,12 @@ struct Settings {
     threshold_milli: u32,
     #[serde(default = "default_language")]
     language: String,
+    /// 空闲自动上锁开关。
+    #[serde(default)]
+    autolock_enabled: bool,
+    /// 空闲自动上锁时长（分钟）。
+    #[serde(default = "default_autolock_minutes")]
+    autolock_minutes: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +117,9 @@ struct AppState {
     threshold_milli: u32,
     /// UI language tag: `"en"` (default) or `"zh"`.
     language: String,
+    /// 空闲自动上锁：开关与时长（分钟）。
+    autolock_enabled: bool,
+    autolock_minutes: u32,
     /// 主密码与密保答案的运行期缓存：创建容器时需要它们派生 Recovery 包装包。
     answer_norm: Option<String>,
     master: Option<secmem::SecretBytes>,
@@ -117,6 +138,8 @@ impl AppState {
             selected: None,
             threshold_milli: DEFAULT_THRESHOLD_MILLI,
             language: default_language(),
+            autolock_enabled: false,
+            autolock_minutes: default_autolock_minutes(),
             answer_norm: None,
             master: None,
             locks: HashMap::new(),
@@ -143,8 +166,10 @@ impl AppState {
     fn load_settings(&mut self) {
         if let Ok(raw) = std::fs::read_to_string(self.settings_path()) {
             if let Ok(s) = serde_json::from_str::<Settings>(&raw) {
-                self.threshold_milli = s.threshold_milli.min(1000);
+                self.threshold_milli = s.threshold_milli.clamp(400, 1000);
                 self.language = normalize_language(&s.language);
+                self.autolock_enabled = s.autolock_enabled;
+                self.autolock_minutes = s.autolock_minutes.clamp(1, 240);
             }
         }
     }
@@ -153,6 +178,8 @@ impl AppState {
         let s = Settings {
             threshold_milli: self.threshold_milli,
             language: self.language.clone(),
+            autolock_enabled: self.autolock_enabled,
+            autolock_minutes: self.autolock_minutes,
         };
         if let Ok(txt) = serde_json::to_string(&s) {
             let _ = std::fs::write(self.settings_path(), txt);
@@ -246,6 +273,7 @@ impl AppState {
             "vault.unlock" => self.m_vault_unlock(p),
             "vault.lock" => self.m_vault_lock(),
             "vault.delete" => self.m_vault_delete(p),
+            "vault.import" => self.m_vault_import(p),
 
             "recovery.begin" => self.m_recovery_begin(p),
             "recovery.set_voiceprint" => self.m_recovery_set_voiceprint(p),
@@ -269,6 +297,8 @@ impl AppState {
             "settings.get" => Ok(json!({
                 "similarity_threshold": self.threshold_milli as f64 / 1000.0,
                 "language": self.language,
+                "autolock_enabled": self.autolock_enabled,
+                "autolock_minutes": self.autolock_minutes,
             })),
             "settings.set" => self.m_settings_set(p),
 
@@ -282,6 +312,7 @@ impl AppState {
             "vfs.prepare_drag" => self.vfs_prepare_drag(p),
             "vfs.release_temp" => self.vfs_release_temp(p),
             "vfs.mkdir" => self.vfs_mkdir(p),
+            "vfs.write" => self.vfs_write(p),
             "vfs.delete" => self.vfs_delete(p),
             "vfs.rename" => self.vfs_rename(p),
             "vfs.paste" => self.vfs_paste(p),
@@ -488,6 +519,25 @@ impl AppState {
         }
     }
 
+    fn m_vault_import(&mut self, p: &Value) -> Result<Value> {
+        let src = PathBuf::from(req_str(p, "src")?);
+        let dest_dir = match p_str(p, "dest_dir") {
+            Some(s) if !s.trim().is_empty() => PathBuf::from(s),
+            _ => default_vaults_dir()?,
+        };
+        let (path, name) = vault::import_container(&src, &dest_dir)?;
+        self.index_add(&path, &name);
+        self.audit.append(
+            "VAULT_IMPORT",
+            &format!("imported container: {} -> {}", src.display(), path.display()),
+        );
+        Ok(json!({
+            "ok": true,
+            "path": path.to_string_lossy(),
+            "name": name,
+        }))
+    }
+
     fn m_vault_lock(&mut self) -> Result<Value> {
         self.voice.set_playback(false);
         let _ = vault::purge_temp_dir(&self.tmp_dir());
@@ -690,6 +740,8 @@ impl AppState {
         self.master = None;
         self.locks.clear();
         self.threshold_milli = DEFAULT_THRESHOLD_MILLI;
+        self.autolock_enabled = false;
+        self.autolock_minutes = default_autolock_minutes();
 
         Ok(json!({ "ok": true }))
     }
@@ -744,16 +796,25 @@ impl AppState {
     fn m_settings_set(&mut self, p: &Value) -> Result<Value> {
         // Both parameters are optional so the UI can update one field at a time.
         if let Some(v) = p.get("similarity_threshold").and_then(|x| x.as_f64()) {
-            self.threshold_milli = (v.clamp(0.0, 1.0) * 1000.0).round() as u32;
+            // 下限 0.40：声纹门禁不得被调到过于宽松的水平。
+            self.threshold_milli = (v.clamp(0.4, 1.0) * 1000.0).round() as u32;
         }
         if let Some(l) = p.get("language").and_then(|x| x.as_str()) {
             self.language = normalize_language(l);
+        }
+        if let Some(b) = p.get("autolock_enabled").and_then(|x| x.as_bool()) {
+            self.autolock_enabled = b;
+        }
+        if let Some(m) = p.get("autolock_minutes").and_then(|x| x.as_u64()) {
+            self.autolock_minutes = (m as u32).clamp(1, 240);
         }
         self.save_settings();
         Ok(json!({
             "ok": true,
             "similarity_threshold": self.threshold_milli as f64 / 1000.0,
             "language": self.language,
+            "autolock_enabled": self.autolock_enabled,
+            "autolock_minutes": self.autolock_minutes,
         }))
     }
 
@@ -878,6 +939,18 @@ impl AppState {
         let dir = p_str(p, "path").unwrap_or_default();
         let name = req_str(p, "name")?;
         self.require_open_mut()?.mkdir(&dir, &name)?;
+        Ok(json!({ "ok": true }))
+    }
+
+    /// 新建或覆盖写一个文本文件（`name` 为含扩展名的纯文件名，`text` 为 UTF-8 内容）。
+    fn vfs_write(&mut self, p: &Value) -> Result<Value> {
+        let dir = p_str(p, "path").unwrap_or_default();
+        let name = req_str(p, "name")?;
+        let text = p_str(p, "text").unwrap_or_default();
+        if name.is_empty() || name.contains('/') || name.contains('\\') {
+            bail!("INVALID FILE NAME");
+        }
+        self.require_open_mut()?.write_file(&dir, &name, text.as_bytes())?;
         Ok(json!({ "ok": true }))
     }
 

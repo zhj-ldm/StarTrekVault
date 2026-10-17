@@ -24,6 +24,8 @@
 
   var I18N = window.STV_I18N;
   var unlocked = false;
+  var autoLockTimer = null;
+  var autoLockMs = 0;
 
   var DENY = 'AUTHORIZATION DENIED';
   var LOCKED_OUT = 'LOCKED OUT - AUTHORIZATION SUSPENDED FOR 5 MINUTES';
@@ -379,6 +381,36 @@
   // Legacy entry point kept so any stale onclick still resolves somewhere sane.
   window.verifyCode = lockPrimary;
 
+  /* ------------------------------------------------------- idle auto-lock */
+
+  // When enabled in settings, lock the vault and return to the main page after
+  // N minutes with no user activity. Any interaction resets the countdown.
+  function resetAutoLock() {
+    if (autoLockTimer) { clearTimeout(autoLockTimer); autoLockTimer = null; }
+    if (!autoLockMs || !unlocked) return;
+    autoLockTimer = setTimeout(autoLockNow, autoLockMs);
+  }
+
+  function autoLockNow() {
+    autoLockTimer = null;
+    if (!unlocked) return;
+    API.invoke('vault.lock', {}).catch(function () { /* already locked */ });
+    API.go('app.html');
+  }
+
+  function onAutoLockActivity() {
+    if (autoLockMs && unlocked) resetAutoLock();
+  }
+
+  function armAutoLock() {
+    API.invoke('settings.get', {}).then(function (s) {
+      if (!s || !s.autolock_enabled) { autoLockMs = 0; return; }
+      var mins = Number(s.autolock_minutes || 0);
+      autoLockMs = mins > 0 ? mins * 60000 : 0;
+      resetAutoLock();
+    }, function () { autoLockMs = 0; });
+  }
+
   /* -------------------------------------------------------------------- boot */
 
   function reload() {
@@ -388,6 +420,12 @@
 
   function boot() {
     window.verifyCode = lockPrimary;
+
+    // Reset the idle countdown on any interaction (capture phase so scrolling and
+    // clicks inside the file list also count).
+    ['mousemove', 'mousedown', 'keydown', 'wheel', 'scroll', 'touchstart', 'click'].forEach(function (ev) {
+      window.addEventListener(ev, onAutoLockActivity, true);
+    });
 
     var query = parseQuery(location.search);
     var selected = strip(query.path);
@@ -403,6 +441,7 @@
           unlocked = true;
           showLock(false);
           reload();
+          armAutoLock();
           return;
         }
         showLock(true);

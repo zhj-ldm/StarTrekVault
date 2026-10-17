@@ -99,6 +99,7 @@
 
       <div class="lcars-actions">
         <button class="lcars-btn" id="btn-new-vault" type="button">CREATE NEW VAULT</button>
+        <button class="lcars-btn lcars-btn--violet" id="btn-import-vault" type="button">IMPORT VAULT</button>
         <button class="lcars-btn lcars-btn--blue" id="btn-refresh-vaults" type="button">REFRESH</button>
       </div>
 
@@ -187,10 +188,22 @@
         <button class="lcars-btn" id="btn-lang-zh" type="button">中文</button>
       </div>
 
+      <h2 class="lcars-h">AUTO-LOCK ON IDLE</h2>
+      <p class="lcars-p">WHEN ENABLED, THE VAULT AUTOMATICALLY LOCKS AND RETURNS TO THE MAIN PAGE AFTER THE SET NUMBER OF MINUTES WITHOUT ANY ACTIVITY.</p>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="settings-autolock-enabled" style="display:flex;align-items:center;gap:.5em;cursor:pointer">
+          <input id="settings-autolock-enabled" type="checkbox"> ENABLE AUTO-LOCK
+        </label>
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="settings-autolock-minutes">IDLE MINUTES (1 - 240)</label>
+        <input class="lcars-input" id="settings-autolock-minutes" type="number" min="1" max="240" step="1" value="5">
+      </div>
+
       <h2 class="lcars-h">VOICEPRINT MATCH THRESHOLD</h2>
-      <p class="lcars-p">SIMILARITY THRESHOLD USED FOR VOICEPRINT VERIFICATION. VALID RANGE 0.10 TO 0.90.</p>
+      <p class="lcars-p">SIMILARITY THRESHOLD USED FOR VOICEPRINT VERIFICATION. VALID RANGE 0.40 TO 0.90.</p>
       <div class="lcars-counter" id="settings-threshold-value">0.65</div>
-      <input class="lcars-range" id="settings-threshold" type="range" min="0.1" max="0.9" step="0.05" value="0.65">
+      <input class="lcars-range" id="settings-threshold" type="range" min="0.4" max="0.9" step="0.05" value="0.65">
       <div class="lcars-actions">
         <button class="lcars-btn" id="btn-apply-settings" type="button">APPLY</button>
       </div>

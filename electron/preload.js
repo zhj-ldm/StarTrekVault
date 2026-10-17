@@ -10,6 +10,7 @@
      invoke(method, params)   -> Promise<result>      backend JSON-RPC
      micAuthorize()           -> Promise<boolean>     macOS microphone consent
      pickVaultPath(name)      -> Promise<string|null> save dialog for .stvault
+     pickStvaultFile()        -> Promise<{canceled,path?,dest_dir?}> open dialog to import a .stvault
      pickFiles({path})        -> Promise<{ok,imported}> open dialog + vfs.import
      exportFile({path,file})  -> Promise<{ok}>        save dialog + vfs.export
      dragBegin({path,file})   -> Promise<{temp_path}> decrypt + startDrag
@@ -27,6 +28,7 @@ contextBridge.exposeInMainWorld('stvault', {
   invoke: (method, params) => invoke('stvault:rpc', { method: String(method || ''), params: params || {} }),
   micAuthorize: () => invoke('stvault:mic-authorize', {}),
   pickVaultPath: (name) => invoke('stvault:pick-vault-path', { name: String(name || '') }),
+  pickStvaultFile: () => invoke('stvault:pick-stvault-file', {}),
   pickFiles: (payload) => invoke('stvault:pick-files', payload || {}),
   exportFile: (payload) => invoke('stvault:export-file', payload || {}),
   dragBegin: (payload) => invoke('stvault:drag-begin', payload || {}),

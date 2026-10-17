@@ -1246,6 +1246,47 @@ pub fn max_similarity(a: &[f32], slots: &[Vec<f32>], dim: usize) -> f32 {
     best.max(0.0)
 }
 
+/// 导入外部 `.stvault` 容器：先校验格式/完整性，再复制到 `dest_dir`。
+/// 返回 `(落盘路径, 展示名)`。目标同名已存在时自动追加 `-1`、`-2`… 避免覆盖既有容器。
+pub fn import_container(src: &Path, dest_dir: &Path) -> Result<(PathBuf, String)> {
+    if !src.is_file() {
+        bail!("导入失败：源文件不存在 {}", src.display());
+    }
+    // 用 Header::read 做格式与完整性校验（magic / 版本 / 头部校验和），
+    // 非法文件立即拒绝，不会把垃圾拷进 vaults 目录。
+    let _ = Header::read(src)?;
+    if src.extension().map(|e| e.eq_ignore_ascii_case("stvault")).unwrap_or(false) == false {
+        bail!("导入失败：不是 .stvault 容器文件");
+    }
+
+    std::fs::create_dir_all(dest_dir)
+        .with_context(|| format!("创建存放目录失败: {}", dest_dir.display()))?;
+
+    let stem = src
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "IMPORTED".to_string());
+    // 去掉路径分隔符等，避免展示名/文件名被污染。
+    let safe: String = stem
+        .chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '\0') { '_' } else { c })
+        .collect();
+
+    let mut dest = dest_dir.join(format!("{safe}.stvault"));
+    let mut n = 1u32;
+    while dest.exists() {
+        dest = dest_dir.join(format!("{safe}-{n}.stvault"));
+        n += 1;
+        if n > 9999 {
+            bail!("导入失败：目标目录同名文件过多");
+        }
+    }
+    std::fs::copy(src, &dest)
+        .with_context(|| format!("复制容器失败: {} -> {}", src.display(), dest.display()))?;
+    Ok((dest, safe))
+}
+
 /// System Wipe：整容器 3 轮 CSPRNG 覆写后删除。
 pub fn wipe_container(path: &Path) -> Result<()> {
     crate::config::erase_file(path)
