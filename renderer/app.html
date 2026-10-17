@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#000">
+<title>STAR TREK VAULT</title>
+<link rel="stylesheet" href="lcars.css">
+</head>
+<body>
+
+  <!-- ===================== HEADER (LCARSDE shell, as fm.html) ===================== -->
+  <header id="header">
+    <div class="bar--left header--left"></div>
+    <div class="bar--sep header--sep"></div>
+    <div class="bar--space header--space"></div>
+    <div class="header__logo">
+      <a class="header__link" href="#" onclick="return false"><h1 class="header__header"><span class="header__name--short">STAR TREK VAULT</span><span class="header__name--long">STAR TREK VAULT - LCARS</span></h1></a>
+    </div>
+    <div class="bar--right header--right"></div>
+  </header>
+
+  <!-- ===================== NAVIGATION RAIL ===================== -->
+  <div id="nav__container">
+    <div class="nav__bar--top"></div>
+    <nav class="nav">
+      <ul class="nav__list" id="nav-list">
+        <li class="nav__entry"><button class="nav__link" id="nav-vaults" data-num="01" type="button">VAULT LIST</button></li>
+        <li class="nav__entry"><button class="nav__link" id="nav-create" data-num="02" type="button">CREATE VAULT</button></li>
+        <li class="nav__entry"><button class="nav__link" id="nav-settings" data-num="03" type="button">SETTINGS</button></li>
+        <li class="nav__entry"><button class="nav__link" id="nav-audit" data-num="04" type="button">AUDIT LOG</button></li>
+        <li class="nav__entry"><button class="nav__link" id="nav-fm" data-num="05" type="button">FILE MANAGER</button></li>
+      </ul>
+    </nav>
+    <div class="nav__bar--bottom"></div>
+  </div>
+
+  <div class="bar__main-nav-separator">
+    <div class="bar--left bar__main-nav--left"></div>
+    <div class="bar--space bar__main-nav--space"></div>
+    <div class="bar--right bar__main-nav--right"></div>
+  </div>
+
+  <!-- ===================== MAIN / VIEWS ===================== -->
+  <main id="main__container">
+
+    <!-- status strip -->
+    <div class="stv-state" id="header-state">
+      <div class="stv-state__bar-l"></div>
+      <div class="stv-state__mid">
+        <span class="stv-state__item" id="hdr-mic">MIC: --</span>
+        <span class="stv-state__item" id="hdr-voice">VOICE: --</span>
+        <span class="stv-state__item" id="hdr-vault">VAULT: --</span>
+      </div>
+      <div class="stv-state__bar-r"></div>
+    </div>
+
+    <!-- ---------- VIEW 1: SETUP ---------- -->
+    <section class="lcars-view" id="view-setup">
+      <h1 class="lcars-title">SECURITY GRID INITIALIZATION</h1>
+
+      <div class="lcars-bar3">
+        <div class="lcars-bar3__l bg-red"></div>
+        <div class="lcars-bar3__m bg-red">AUTHORIZATION REQUIRED</div>
+        <div class="lcars-bar3__r bg-red"></div>
+      </div>
+
+      <p class="lcars-p">FIRST LAUNCH DETECTED. DEFINE THE SECURITY QUESTION, ITS ANSWER AND THE STATIC MASTER PASSWORD. THESE FACTORS SEAL THE GLOBAL CONFIGURATION AND CANNOT BE RECOVERED IF LOST.</p>
+
+      <div class="lcars-error" id="setup-error" hidden></div>
+
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="setup-question">SECURITY QUESTION</label>
+        <input class="lcars-input" id="setup-question" type="text" autocomplete="off" placeholder="ENTER SECURITY QUESTION">
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="setup-answer">ANSWER</label>
+        <input class="lcars-input" id="setup-answer" type="text" autocomplete="off" placeholder="ENTER ANSWER">
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="setup-master">MASTER PASSWORD</label>
+        <input class="lcars-input" id="setup-master" type="password" autocomplete="off" placeholder="ENTER MASTER PASSWORD">
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="setup-master2">CONFIRM MASTER PASSWORD</label>
+        <input class="lcars-input" id="setup-master2" type="password" autocomplete="off" placeholder="RE-ENTER MASTER PASSWORD">
+      </div>
+
+      <div class="lcars-actions">
+        <button class="lcars-btn" id="btn-setup" type="button">INITIALIZE SECURITY GRID</button>
+      </div>
+    </section>
+
+    <!-- ---------- VIEW 2: VAULT LIST ---------- -->
+    <section class="lcars-view" id="view-vaults">
+      <h1 class="lcars-title">VAULT LIST</h1>
+
+      <div class="lcars-error" id="vaults-error" hidden></div>
+
+      <div class="lcars-actions">
+        <button class="lcars-btn" id="btn-new-vault" type="button">CREATE NEW VAULT</button>
+        <button class="lcars-btn lcars-btn--blue" id="btn-refresh-vaults" type="button">REFRESH</button>
+      </div>
+
+      <div class="lcars-table-wrap">
+        <table class="lcars-table" id="vault-table">
+          <thead>
+            <tr>
+              <th>NAME</th>
+              <th>SIZE</th>
+              <th>CREATED</th>
+              <th>STATUS</th>
+              <th>ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody id="vault-tbody"></tbody>
+        </table>
+      </div>
+      <div class="lcars-empty" id="vaults-empty" hidden>NO VAULT CONTAINERS REGISTERED</div>
+    </section>
+
+    <!-- ---------- VIEW 3: CREATE VAULT ---------- -->
+    <section class="lcars-view" id="view-create">
+      <h1 class="lcars-title">CREATE VAULT</h1>
+
+      <div class="lcars-error" id="create-error" hidden></div>
+
+      <h2 class="lcars-h">CONTAINER</h2>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="create-name">VAULT NAME</label>
+        <input class="lcars-input" id="create-name" type="text" autocomplete="off" placeholder="ENTER VAULT NAME">
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="create-path">CONTAINER PATH</label>
+        <input class="lcars-input" id="create-path" type="text" readonly placeholder="NO LOCATION CHOSEN">
+      </div>
+      <div class="lcars-actions">
+        <button class="lcars-btn lcars-btn--blue" id="btn-choose-location" type="button">CHOOSE LOCATION</button>
+      </div>
+
+      <h2 class="lcars-h">MASTER CREDENTIALS</h2>
+      <p class="lcars-p">THE RECOVERY WRAP OF EVERY CONTAINER IS SEALED WITH THE SECURITY ANSWER AND THE STATIC MASTER PASSWORD. SUPPLY THEM TO AUTHORISE CREATION.</p>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="create-answer">SECURITY ANSWER</label>
+        <input class="lcars-input" id="create-answer" type="text" autocomplete="off" placeholder="ENTER SECURITY ANSWER">
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="create-master">MASTER PASSWORD</label>
+        <input class="lcars-input" id="create-master" type="password" autocomplete="off" placeholder="ENTER MASTER PASSWORD">
+      </div>
+
+      <h2 class="lcars-h">VOICEPRINT ENROLMENT</h2>
+      <p class="lcars-p">SPEAK THE SAME AUTHORIZATION CODE TWO OR THREE TIMES. EVERY ACCEPTED TAKE IS COMBINED INTO THE VOICEPRINT TEMPLATE AND ALL TAKES MUST MATCH.</p>
+
+      <div class="lcars-bar3">
+        <div class="lcars-bar3__l bg-violet"></div>
+        <div class="lcars-bar3__m bg-violet" id="create-record-status">STANDBY</div>
+        <div class="lcars-bar3__r bg-violet"></div>
+      </div>
+
+      <div class="lcars-readout" id="create-asr-text">NO TAKE RECORDED</div>
+      <div class="lcars-counter" id="create-take-counter">TAKE 1 / 3 &middot; ACCEPTED 0</div>
+      <ul class="lcars-takes" id="create-takes"></ul>
+
+      <div class="lcars-actions">
+        <button class="lcars-btn" id="btn-create-record" type="button">RECORD AUTHORIZATION CODE</button>
+        <button class="lcars-btn lcars-btn--blue" id="btn-create-again" type="button" disabled>RECORD AGAIN</button>
+        <button class="lcars-btn lcars-btn--blue" id="btn-create-accept" type="button" disabled>ACCEPT TAKE</button>
+      </div>
+
+      <div class="lcars-actions">
+        <button class="lcars-btn" id="btn-create-vault" type="button" disabled>CREATE VAULT</button>
+        <button class="lcars-btn lcars-btn--ghost" id="btn-create-cancel" type="button">RETURN TO VAULT LIST</button>
+      </div>
+    </section>
+
+    <!-- ---------- VIEW 4: SETTINGS ---------- -->
+    <section class="lcars-view" id="view-settings">
+      <h1 class="lcars-title">SETTINGS</h1>
+
+      <div class="lcars-error" id="settings-error" hidden></div>
+
+      <h2 class="lcars-h">LANGUAGE</h2>
+      <p class="lcars-p">SELECT INTERFACE LANGUAGE. DEFAULT IS ENGLISH.</p>
+      <div class="lcars-actions">
+        <button class="lcars-btn lcars-btn--blue" id="btn-lang-en" type="button">ENGLISH</button>
+        <button class="lcars-btn" id="btn-lang-zh" type="button">中文</button>
+      </div>
+
+      <h2 class="lcars-h">VOICEPRINT MATCH THRESHOLD</h2>
+      <p class="lcars-p">SIMILARITY THRESHOLD USED FOR VOICEPRINT VERIFICATION. VALID RANGE 0.10 TO 0.90.</p>
+      <div class="lcars-counter" id="settings-threshold-value">0.65</div>
+      <input class="lcars-range" id="settings-threshold" type="range" min="0.1" max="0.9" step="0.05" value="0.65">
+      <div class="lcars-actions">
+        <button class="lcars-btn" id="btn-apply-settings" type="button">APPLY</button>
+      </div>
+
+      <h2 class="lcars-h">RECOVERY AND DESTRUCTION</h2>
+      <p class="lcars-p">RECOVERY ACCESS CLEARS THE OLD VOICEPRINT TEMPLATE AND RE-ENROLS A NEW ONE, PRESERVING ALL STORED FILE DATA. SYSTEM WIPE IRREVERSIBLY DESTROYS EVERY CONTAINER, THE GLOBAL CONFIGURATION AND THE AUDIT LOG.</p>
+      <div class="lcars-actions">
+        <button class="lcars-btn lcars-btn--blue" id="btn-settings-recovery" type="button">RECOVERY ACCESS</button>
+        <button class="lcars-btn lcars-btn--red" id="btn-system-wipe" type="button">SYSTEM WIPE</button>
+      </div>
+      <div class="lcars-actions">
+        <button class="lcars-btn lcars-btn--ghost" id="btn-settings-fm" type="button" hidden>RETURN TO FILE MANAGER</button>
+      </div>
+    </section>
+
+    <!-- ---------- VIEW 5: RECOVERY ---------- -->
+    <section class="lcars-view" id="view-recovery">
+      <h1 class="lcars-title">RECOVERY ACCESS</h1>
+
+      <div class="lcars-bar3">
+        <div class="lcars-bar3__l bg-red"></div>
+        <div class="lcars-bar3__m bg-red">DUAL FACTOR AUTHORIZATION REQUIRED</div>
+        <div class="lcars-bar3__r bg-red"></div>
+      </div>
+
+      <div class="lcars-error" id="recovery-error" hidden></div>
+
+      <h2 class="lcars-h">CREDENTIALS</h2>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="recovery-path">VAULT PATH</label>
+        <input class="lcars-input" id="recovery-path" type="text" autocomplete="off" placeholder="/PATH/TO/VAULT.STVAULT">
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="recovery-answer">SECURITY ANSWER</label>
+        <input class="lcars-input" id="recovery-answer" type="text" autocomplete="off" placeholder="ENTER SECURITY ANSWER">
+      </div>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="recovery-master">MASTER PASSWORD</label>
+        <input class="lcars-input" id="recovery-master" type="password" autocomplete="off" placeholder="ENTER MASTER PASSWORD">
+      </div>
+
+      <div class="lcars-readout" id="recovery-question">SECURITY QUESTION: NOT VERIFIED</div>
+
+      <div class="lcars-actions">
+        <button class="lcars-btn" id="btn-verify-credentials" type="button">VERIFY CREDENTIALS</button>
+      </div>
+
+      <div id="recovery-voiceprint" hidden>
+        <h2 class="lcars-h">VOICEPRINT RE-ENROLMENT</h2>
+        <p class="lcars-p">THE OLD VOICEPRINT TEMPLATE IS CLEARED AND REPLACED. FILE DATA IS PRESERVED. SPEAK THE AUTHORIZATION CODE TWO OR THREE TIMES.</p>
+
+        <div class="lcars-bar3">
+          <div class="lcars-bar3__l bg-violet"></div>
+          <div class="lcars-bar3__m bg-violet" id="rec-record-status">STANDBY</div>
+          <div class="lcars-bar3__r bg-violet"></div>
+        </div>
+
+        <div class="lcars-readout" id="rec-asr-text">NO TAKE RECORDED</div>
+        <div class="lcars-counter" id="rec-take-counter">TAKE 1 / 3 &middot; ACCEPTED 0</div>
+        <ul class="lcars-takes" id="rec-takes"></ul>
+
+        <div class="lcars-actions">
+          <button class="lcars-btn" id="btn-rec-record" type="button">RECORD AUTHORIZATION CODE</button>
+          <button class="lcars-btn lcars-btn--blue" id="btn-rec-again" type="button" disabled>RECORD AGAIN</button>
+          <button class="lcars-btn lcars-btn--blue" id="btn-rec-accept" type="button" disabled>ACCEPT TAKE</button>
+        </div>
+
+        <div class="lcars-actions">
+          <button class="lcars-btn lcars-btn--red" id="btn-commit-voiceprint" type="button" disabled>COMMIT NEW VOICEPRINT</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- VIEW 6: AUDIT LOG ---------- -->
+    <section class="lcars-view" id="view-audit">
+      <h1 class="lcars-title">AUDIT LOG</h1>
+
+      <div class="lcars-error" id="audit-error" hidden></div>
+
+      <p class="lcars-p">THE AUDIT LOG IS SEALED WITH THE MASTER PASSWORD. SUPPLY IT TO DECRYPT AND VERIFY THE HASH CHAIN.</p>
+      <div class="lcars-field">
+        <label class="lcars-field__label" for="audit-master">MASTER PASSWORD</label>
+        <input class="lcars-input" id="audit-master" type="password" autocomplete="off" placeholder="ENTER MASTER PASSWORD">
+      </div>
+      <div class="lcars-actions">
+        <button class="lcars-btn" id="btn-decrypt-log" type="button">DECRYPT LOG</button>
+      </div>
+
+      <div class="lcars-table-wrap">
+        <table class="lcars-table" id="audit-table">
+          <thead>
+            <tr>
+              <th>TIME</th>
+              <th>EVENT</th>
+              <th>DETAIL</th>
+              <th>HASH</th>
+            </tr>
+          </thead>
+          <tbody id="audit-tbody"></tbody>
+        </table>
+      </div>
+      <div class="lcars-empty" id="audit-empty" hidden>NO AUDIT ENTRIES</div>
+    </section>
+
+  </main>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer id="footer">
+    <div class="bar--left footer--left"></div>
+    <div class="bar--sep footer--sep"></div>
+    <div class="bar--space footer--space"></div>
+    <div class="bar--right footer--right"></div>
+  </footer>
+
+  <!-- ===================== CONFIRMATION MODAL ===================== -->
+  <div class="lcars-modal-overlay" id="lcars-modal">
+    <div class="lcars-modal" role="dialog" aria-modal="true">
+      <div class="lcars-modal__header">
+        <span id="lcars-modal-title">CONFIRM</span>
+        <button class="lcars-modal__close" id="lcars-modal-close" type="button">X</button>
+      </div>
+      <div class="lcars-modal__body" id="lcars-modal-body"></div>
+      <div class="lcars-modal__footer" id="lcars-modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- ===================== OFFLINE OVERLAY ===================== -->
+  <div class="lcars-offline" id="lcars-offline">
+    <div class="lcars-bar3 lcars-offline__bar">
+      <div class="lcars-bar3__l bg-red"></div>
+      <div class="lcars-bar3__m bg-red">AUTHORIZATION REQUIRED</div>
+      <div class="lcars-bar3__r bg-red"></div>
+    </div>
+    <div class="lcars-offline__msg">LCARS LINK OFFLINE</div>
+    <p class="lcars-p">THE VAULT INTERFACE IS UNAVAILABLE OUTSIDE THE STAR TREK VAULT SHELL.</p>
+  </div>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

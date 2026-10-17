@@ -1,0 +1,41 @@
+[package]
+name = "stvault-backend"
+version = "0.1.0"
+edition = "2021"
+description = "LCARS Voiceprint Encrypted Vault — Rust single-binary backend (audio + crypto + .stvault container + virtual FS, JSON-RPC over stdio)"
+publish = false
+
+[[bin]]
+name = "stvault-backend"
+path = "src/main.rs"
+
+[dependencies]
+# --- async runtime / serialisation ---
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+base64 = "0.22"
+chrono = "0.4"
+once_cell = "1"
+
+# --- 音频：唯一一路 cpal 常驻采集 + sherpa-onnx（VAD / ASR / 声纹 embedding） ---
+cpal = "0.15"
+sherpa-onnx = "1.13"
+
+# --- 加密 ---
+aes-gcm-siv = { version = "0.11", features = ["aes"] }  # AES-256-GCM-SIV (RFC 8452)
+aes-kw = "0.3"                                           # AES Key Wrap (RFC 3394 / NIST SP 800-38F)
+argon2 = "0.5"                                           # Argon2id 凭证哈希
+sha3 = "0.10"                                            # SHA3-256 容器完整性 / 审计哈希链
+rand = "0.8"
+subtle = "2"                                             # 常量时间比较
+zeroize = { version = "1", features = ["derive"] }
+libc = "0.2"                                             # mlock / munlock / MADV_DONTDUMP
+
+# 磁盘与构建缓存：与既有 star-trek-assistant 的 release profile 保持一致，
+# 使 target/ 里已编译好的 sherpa-onnx / cpal / tokio 等依赖产物可以直接复用。
+[profile.release]
+lto = "thin"
+opt-level = 2
+strip = true

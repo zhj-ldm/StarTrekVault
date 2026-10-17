@@ -1,0 +1,19 @@
+# dependencies (also matches the dev symlink)
+node_modules
+
+# rust build output
+backend/target/
+
+# electron-builder output
+dist/
+out/
+*.dmg
+*.blockmap
+*.zip
+
+# macOS
+.DS_Store
+
+# logs
+*.log
+npm-debug.log*

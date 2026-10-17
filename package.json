@@ -1,0 +1,46 @@
+{
+  "name": "star-trek-vault",
+  "version": "1.0.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "description": "LCARS voiceprint-authorized encrypted vault (Star Trek Vault)",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "backend": "bash tools/build.sh",
+    "icon": "node tools/mkicon.js",
+    "dist": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.startrek.vault",
+    "productName": "Star Trek Vault",
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "."
+      },
+      {
+        "from": "backend/target/release/stvault-backend",
+        "to": "bin/stvault-backend"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.utilities",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "STAR TREK VAULT listens to your voice only to authorize unlocking your encrypted containers. Audio never leaves this Mac."
+      }
+    }
+  }
+}
