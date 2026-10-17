@@ -27,10 +27,6 @@
       {
         "from": "resources",
         "to": "."
-      },
-      {
-        "from": "backend/target/release/stvault-backend",
-        "to": "bin/stvault-backend"
       }
     ],
     "mac": {
@@ -38,6 +34,7 @@
         "dmg"
       ],
       "category": "public.app-category.utilities",
+      "identity": null,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "STAR TREK VAULT listens to your voice only to authorize unlocking your encrypted containers. Audio never leaves this Mac."
       }
