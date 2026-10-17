@@ -537,11 +537,63 @@ impl AppState {
         vault::unlock_with_recovery(path, answer_norm, master)
     }
 
+    /// Recovery 通路的锁定键（与口令通路的锁定计数相互独立）。
+    fn recovery_lock_key(path: &Path) -> String {
+        format!("recovery:{}", path.to_string_lossy())
+    }
+
+    /// 若当前被锁定则返回剩余毫秒（0 = 未锁定）。
+    fn recovery_locked_until(&self, path: &Path) -> u64 {
+        let now = now_ms();
+        self.locks
+            .get(&Self::recovery_lock_key(path))
+            .map(|r| r.locked_until_ms)
+            .filter(|&t| t > now)
+            .unwrap_or(0)
+    }
+
+    /// 记一次 Recovery 失败；累计到 MAX_FAILS 即锁定，持久化到 locks.json。
+    fn recovery_note_failure(&mut self, path: &Path) {
+        let key = Self::recovery_lock_key(path);
+        let rec = self.locks.entry(key).or_default();
+        rec.fails = rec.fails.saturating_add(1);
+        if rec.fails >= MAX_FAILS {
+            rec.locked_until_ms = now_ms() + LOCK_MS;
+        }
+        self.save_locks();
+    }
+
+    /// Recovery 成功后清零失败计数。
+    fn recovery_note_success(&mut self, path: &Path) {
+        if self.locks.remove(&Self::recovery_lock_key(path)).is_some() {
+            self.save_locks();
+        }
+    }
+
     fn m_recovery_begin(&mut self, p: &Value) -> Result<Value> {
         let path = PathBuf::from(req_str(p, "path")?);
+        let until = self.recovery_locked_until(&path);
+        if until > 0 {
+            bail!("LOCKED OUT - TRY AGAIN IN {}s", (until - now_ms()) / 1000 + 1);
+        }
         let answer_norm = crypto::normalize_passphrase(&req_str(p, "answer")?);
         let master = req_str(p, "master")?;
-        let u = self.verify_recovery(&answer_norm, &master, &path)?;
+        let u = match self.verify_recovery(&answer_norm, &master, &path) {
+            Ok(u) => u,
+            Err(e) => {
+                self.recovery_note_failure(&path);
+                self.audit
+                    .append("RECOVERY_FAILED", &format!("denied for {}", path.display()));
+                let until = self.recovery_locked_until(&path);
+                if until > 0 {
+                    bail!("LOCKED OUT - TRY AGAIN IN {}s", (until - now_ms()) / 1000 + 1);
+                }
+                let remaining = MAX_FAILS
+                    .saturating_sub(self.locks.get(&Self::recovery_lock_key(&path)).map(|r| r.fails).unwrap_or(0));
+                return Err(anyhow!("{e} - {remaining} ATTEMPT(S) LEFT"));
+            }
+        };
+        self.recovery_note_success(&path);
         let ak = u.audit_key;
 
         self.answer_norm = Some(answer_norm);
@@ -565,6 +617,10 @@ impl AppState {
 
     fn m_recovery_set_voiceprint(&mut self, p: &Value) -> Result<Value> {
         let path = PathBuf::from(req_str(p, "path")?);
+        let until = self.recovery_locked_until(&path);
+        if until > 0 {
+            bail!("LOCKED OUT - TRY AGAIN IN {}s", (until - now_ms()) / 1000 + 1);
+        }
         let answer_norm = crypto::normalize_passphrase(&req_str(p, "answer")?);
         let master = req_str(p, "master")?;
         let passphrase_norm = crypto::normalize_passphrase(&req_str(p, "passphrase_norm")?);
@@ -573,7 +629,20 @@ impl AppState {
             bail!("VOICEPRINT TEMPLATE REQUIRED");
         }
 
-        let mut u = self.verify_recovery(&answer_norm, &master, &path)?;
+        let mut u = match self.verify_recovery(&answer_norm, &master, &path) {
+            Ok(u) => u,
+            Err(e) => {
+                self.recovery_note_failure(&path);
+                self.audit
+                    .append("RECOVERY_FAILED", &format!("denied for {}", path.display()));
+                let until = self.recovery_locked_until(&path);
+                if until > 0 {
+                    bail!("LOCKED OUT - TRY AGAIN IN {}s", (until - now_ms()) / 1000 + 1);
+                }
+                return Err(anyhow!("{e}"));
+            }
+        };
+        self.recovery_note_success(&path);
         vault::reset_voiceprint(&mut u.vault, &passphrase_norm, embeddings, self.threshold_milli)?;
         let ak = u.audit_key;
 

@@ -175,6 +175,65 @@ pub fn sha3_512(data: &[u8]) -> [u8; 64] {
 }
 
 // ---------------------------------------------------------------------------
+// v2 声纹模板保密 + 口令承诺
+// ---------------------------------------------------------------------------
+//
+// v1 把声纹模板明文写进头部，拿到容器文件的人可读出模板并原样当 probe 重放，
+// 从而离线绕过「声纹门禁」。v2 用**口令派生**的密钥流对模板做无扩展的流加密，
+// 模板只有先拿到正确口令（Argon2 → K_voice）才能解密：
+//   - K_emb = SHA3-256("stvault-emb-v2\0" ‖ K_voice)
+//   - 密钥流  block_j = SHA3-256(K_emb ‖ LE64(j))，对模板字节逐字节异或
+// 机密性之外不额外加 MAC：头部整体完整性由 `Header::to_bytes` 的 SHA3-256 覆盖。
+//
+// 同理，v2 的 `passphrase_fp` 不再是 SHA3-256(明文口令)（那是一个**廉价的离线
+// oracle**，攻击者可用高速 SHA3 字典先筛出唯一候选，再只需跑一次 Argon2），
+// 而改为 `passphrase_commitment`——必须知道 Argon2 输出才能计算。
+
+/// 由口令侧 K_voice 派生「声纹模板加密密钥」。
+pub fn emb_key(k_voice: &[u8; KEY_LEN]) -> [u8; KEY_LEN] {
+    let mut v = Vec::with_capacity(KEY_LEN + 16);
+    v.extend_from_slice(b"stvault-emb-v2\x00");
+    v.extend_from_slice(k_voice);
+    let k = sha3_256(&v);
+    v.zeroize();
+    k
+}
+
+/// SHA3-CTR 密钥流：`block_j = SHA3-256(key ‖ LE64(j))`。仅提供机密性。
+pub fn sha3_keystream(key: &[u8; KEY_LEN], n: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(n + 32);
+    let mut ctr = 0u64;
+    while out.len() < n {
+        let mut h = Sha3_256::new();
+        h.update(key);
+        h.update(ctr.to_le_bytes());
+        out.extend_from_slice(&h.finalize());
+        ctr += 1;
+    }
+    out.truncate(n);
+    out
+}
+
+/// 原地异或（长度以两者较短者为准）。
+pub fn xor_inplace(buf: &mut [u8], ks: &[u8]) {
+    for (b, k) in buf.iter_mut().zip(ks.iter()) {
+        *b ^= *k;
+    }
+}
+
+/// v2 口令承诺：`SHA3-256("stvault-fp-v2\0" ‖ salt_voice ‖ K_voice)`。
+/// 需要 Argon2 输出方可计算，因此不构成廉价的离线口令 oracle。
+pub fn passphrase_commitment(salt_voice: &[u8; 16], k_voice: &[u8; KEY_LEN]) -> [u8; 32] {
+    let mut v = Vec::with_capacity(16 + KEY_LEN + 16);
+    v.extend_from_slice(b"stvault-fp-v2\x00");
+    v.extend_from_slice(salt_voice);
+    v.extend_from_slice(k_voice);
+    let c = sha3_256(&v);
+    v.zeroize();
+    c
+}
+
+// ---------------------------------------------------------------------------
 // 常量时间比较（防时序侧信道）
 // ---------------------------------------------------------------------------
 
@@ -340,6 +399,31 @@ mod tests {
             normalize_passphrase("Computer, authorization, Voss seven-three echo bravo!"),
             "computer authorization voss seven three echo bravo"
         );
+    }
+
+    #[test]
+    fn emb_keystream_xor_roundtrip() {
+        let kv = [42u8; 32];
+        let k = emb_key(&kv);
+        let data: Vec<u8> = (0..1000u32).map(|i| (i * 7) as u8).collect();
+        let ks = sha3_keystream(&k, data.len());
+        let mut ct = data.clone();
+        xor_inplace(&mut ct, &ks);
+        assert_ne!(ct, data); // 必须被真正加密
+        let ks2 = sha3_keystream(&k, ct.len());
+        xor_inplace(&mut ct, &ks2);
+        assert_eq!(ct, data); // 解密还原
+        // 不同 K_voice → 不同密钥流
+        assert_ne!(sha3_keystream(&emb_key(&[43u8; 32]), 64), sha3_keystream(&k, 64));
+    }
+
+    #[test]
+    fn passphrase_commitment_requires_salt_and_key() {
+        let kv = [1u8; 32];
+        let a = passphrase_commitment(&[2u8; 16], &kv);
+        assert_eq!(a, passphrase_commitment(&[2u8; 16], &kv));
+        assert_ne!(a, passphrase_commitment(&[3u8; 16], &kv));
+        assert_ne!(a, passphrase_commitment(&[2u8; 16], &[9u8; 32]));
     }
 
     #[test]

@@ -9,9 +9,10 @@
 //! off 36   argon2 m_cost u32 | t_cost u32 | p_cost u32          (-> 48)
 //! off 48   salt_voice (16)
 //! off 64   salt_recovery (16)
-//! off 80   passphrase_fp (32)                 # SHA3-256(norm 口令文本)
+//! off 80   passphrase_fp (32)                 # v2: 口令承诺（需 Argon2 输出方可算）
 //! off 112  emb_dim u32 | emb_count u32 | threshold_milli u32   (-> 124)
-//! off 124  emb_slots = 3 * emb_dim * f32      # 声纹模板（3 个槽位固定，取平均/取最大相似度）
+//! off 124  emb_slots = 3 * emb_dim * f32      # 声纹模板（3 个槽位固定，取最大相似度）
+//!                                              # v1: 明文；v2: 口令派生密钥流加密
 //!          wrap_voice (40)                    # AES-KWP(SRK) —— 口令通路
 //!          wrap_recovery (40)                 # AES-KWP(SRK) —— 密保+静态密码通路
 //!          meta_nonce (12)
@@ -37,7 +38,11 @@ use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
 pub const MAGIC: &[u8; 8] = b"STVAULT1";
-pub const VERSION: u32 = 1;
+/// 当前容器版本。v2 = 声纹模板加密 + 口令承诺（无廉价离线 oracle）；v1 为
+/// 旧版（模板明文 + SHA3-256(明文口令) 指纹），仍可读取以兼容既有容器。
+pub const VERSION: u32 = 2;
+/// 兼容读取的历史版本。
+pub const VERSION_LEGACY: u32 = 1;
 /// 头部区固定长度（含头部字段与补齐）。
 pub const HEADER_REGION: u64 = 8192;
 /// 元数据区固定长度（加密元数据 JSON 的容身上限）。
@@ -176,6 +181,7 @@ pub struct FileEntry {
 // ---------------------------------------------------------------------------
 
 pub struct Header {
+    pub version: u32,
     pub vault_id: [u8; 16],
     pub created_at: u64,
     /// 本容器创建时的 Argon2id 参数（头部自带，改全局参数不影响既有容器）。
@@ -188,6 +194,9 @@ pub struct Header {
     pub emb_dim: usize,
     pub emb_count: usize,
     pub threshold_milli: u32,
+    /// 头部声纹槽位的**磁盘原始字节**（v1 明文 / v2 密文）。`to_bytes` 原样写回。
+    pub emb_raw: Vec<u8>,
+    /// 声纹模板明文。v1 由 `read` 直接解析；v2 需在 unlock 用 K_voice 解密后才填充。
     pub embeddings: Vec<Vec<f32>>,
     pub wrap_voice: [u8; crypto::KW_WRAP_LEN],
     pub wrap_recovery: [u8; crypto::KW_WRAP_LEN],
@@ -206,7 +215,7 @@ impl Header {
             bail!("不是有效的 .stvault 容器");
         }
         let version = u32::from_le_bytes(hb[OFF_VERSION..OFF_VERSION + 4].try_into().unwrap());
-        if version != VERSION {
+        if version != VERSION && version != VERSION_LEGACY {
             bail!("容器版本不支持: {version}");
         }
         let emb_dim = u32::from_le_bytes(hb[OFF_EMB..OFF_EMB + 4].try_into().unwrap()) as usize;
@@ -239,14 +248,14 @@ impl Header {
 
         let mut embeddings = Vec::new();
         let n = emb_count.min(EMB_SLOTS);
-        for i in 0..n {
-            let base = OFF_EMB_SLOTS + i * emb_dim * 4;
-            let mut v = Vec::with_capacity(emb_dim);
-            for j in 0..emb_dim {
-                let o = base + j * 4;
-                v.push(f32::from_le_bytes(hb[o..o + 4].try_into().unwrap()));
+        // 声纹槽位原始字节（v1 明文 / v2 密文），固定 3 * emb_dim * f32。
+        let slots_len = EMB_SLOTS * emb_dim * 4;
+        let emb_raw = hb[OFF_EMB_SLOTS..OFF_EMB_SLOTS + slots_len].to_vec();
+        if version == VERSION_LEGACY {
+            // 旧版明文：无需口令即可解析。
+            for i in 0..n {
+                embeddings.push(decode_slot(&emb_raw, i, emb_dim));
             }
-            embeddings.push(v);
         }
 
         let wv_off = OFF_EMB_SLOTS + EMB_SLOTS * emb_dim * 4;
@@ -267,6 +276,7 @@ impl Header {
             .context("容器元数据区不完整")?;
 
         Ok(Self {
+            version,
             vault_id,
             created_at: u64::from_le_bytes(hb[OFF_CREATED..OFF_CREATED + 8].try_into().unwrap()),
             argon_m,
@@ -278,6 +288,7 @@ impl Header {
             emb_dim,
             emb_count: n,
             threshold_milli,
+            emb_raw,
             embeddings,
             wrap_voice,
             wrap_recovery,
@@ -291,7 +302,7 @@ impl Header {
         let used = header_used(self.emb_dim);
         let mut hb = vec![0u8; HEADER_REGION as usize];
         hb[0..8].copy_from_slice(MAGIC);
-        hb[OFF_VERSION..OFF_VERSION + 4].copy_from_slice(&VERSION.to_le_bytes());
+        hb[OFF_VERSION..OFF_VERSION + 4].copy_from_slice(&self.version.to_le_bytes());
         hb[OFF_VAULT_ID..OFF_VAULT_ID + 16].copy_from_slice(&self.vault_id);
         hb[OFF_CREATED..OFF_CREATED + 8].copy_from_slice(&self.created_at.to_le_bytes());
         hb[OFF_ARGON2..OFF_ARGON2 + 4].copy_from_slice(&self.argon_m.to_le_bytes());
@@ -303,12 +314,9 @@ impl Header {
         hb[OFF_EMB..OFF_EMB + 4].copy_from_slice(&(self.emb_dim as u32).to_le_bytes());
         hb[OFF_EMB + 4..OFF_EMB + 8].copy_from_slice(&(self.emb_count as u32).to_le_bytes());
         hb[OFF_EMB + 8..OFF_EMB + 12].copy_from_slice(&self.threshold_milli.to_le_bytes());
-        for (i, e) in self.embeddings.iter().take(EMB_SLOTS).enumerate() {
-            let base = OFF_EMB_SLOTS + i * self.emb_dim * 4;
-            for (j, x) in e.iter().take(self.emb_dim).enumerate() {
-                hb[base + j * 4..base + j * 4 + 4].copy_from_slice(&x.to_le_bytes());
-            }
-        }
+        let slots_len = EMB_SLOTS * self.emb_dim * 4;
+        let n = self.emb_raw.len().min(slots_len);
+        hb[OFF_EMB_SLOTS..OFF_EMB_SLOTS + n].copy_from_slice(&self.emb_raw[..n]);
         let wv_off = OFF_EMB_SLOTS + EMB_SLOTS * self.emb_dim * 4;
         let wr_off = wv_off + WRAP;
         hb[wv_off..wv_off + WRAP].copy_from_slice(&self.wrap_voice);
@@ -321,6 +329,50 @@ impl Header {
         debug_assert_eq!(io + 32, used);
         hb
     }
+}
+
+// ---------------------------------------------------------------------------
+// 声纹槽位编码 / v2 加密（口令派生密钥流）
+// ---------------------------------------------------------------------------
+
+/// 从槽位原始字节解析一个 f32 向量（越界返回空表）。
+fn decode_slot(raw: &[u8], slot: usize, emb_dim: usize) -> Vec<f32> {
+    let base = slot * emb_dim * 4;
+    if emb_dim == 0 || base + emb_dim * 4 > raw.len() {
+        return Vec::new();
+    }
+    let mut v = Vec::with_capacity(emb_dim);
+    for j in 0..emb_dim {
+        let o = base + j * 4;
+        v.push(f32::from_le_bytes(raw[o..o + 4].try_into().unwrap()));
+    }
+    v
+}
+
+/// 把模板序列化为定长槽位字节块（EMB_SLOTS 槽，零补齐）。
+fn encode_slots(embs: &[Vec<f32>], emb_dim: usize) -> Vec<u8> {
+    let mut raw = vec![0u8; EMB_SLOTS * emb_dim * 4];
+    for (i, e) in embs.iter().take(EMB_SLOTS).enumerate() {
+        let base = i * emb_dim * 4;
+        for (j, x) in e.iter().take(emb_dim).enumerate() {
+            raw[base + j * 4..base + j * 4 + 4].copy_from_slice(&x.to_le_bytes());
+        }
+    }
+    raw
+}
+
+/// v2：用 K_voice 派生的密钥流异或整块槽位（原地；流密码自反，加解密同一操作）。
+fn xor_slots(raw: &mut [u8], k_voice: &[u8; KEY_LEN]) {
+    let ks = crypto::sha3_keystream(&crypto::emb_key(k_voice), raw.len());
+    crypto::xor_inplace(raw, &ks);
+}
+
+/// v2：解密槽位并解析出 `emb_count` 个模板。
+fn decrypt_slots(raw: &[u8], emb_dim: usize, emb_count: usize, k_voice: &[u8; KEY_LEN]) -> Vec<Vec<f32>> {
+    let mut buf = raw.to_vec();
+    xor_slots(&mut buf, k_voice);
+    let n = emb_count.min(EMB_SLOTS);
+    (0..n).map(|i| decode_slot(&buf, i, emb_dim)).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -930,12 +982,13 @@ pub fn create(a: CreateArgs) -> Result<()> {
         &crypto::passphrase_key_material(a.passphrase_norm, &vault_id),
         &salt_voice,
     )?;
+    let kv = k_voice.to_array32();
     let k_rec = crypto::argon2id_derive(
         &crypto::recovery_key_material(a.answer_norm, a.master, &vault_id),
         &salt_recovery,
     )?;
     let srk_arr = srk.to_array32();
-    let wrap_voice = crypto::wrap_key(&k_voice.to_array32(), &srk_arr)?;
+    let wrap_voice = crypto::wrap_key(&kv, &srk_arr)?;
     let wrap_recovery = crypto::wrap_key(&k_rec.to_array32(), &srk_arr)?;
 
     let meta_key = crypto::sha3_256(&[srk.as_slice(), b"meta".as_slice()].concat());
@@ -947,7 +1000,13 @@ pub fn create(a: CreateArgs) -> Result<()> {
     let mut meta = Meta::new(a.name);
     meta.audit_wrap = audit_wrap;
 
+    // v2：声纹模板加密存储（须先拿到口令）；口令承诺替代明文指纹。
+    let emb_vec: Vec<Vec<f32>> = a.embeddings.into_iter().take(EMB_SLOTS).collect();
+    let mut emb_raw = encode_slots(&emb_vec, emb_dim);
+    xor_slots(&mut emb_raw, &kv);
+
     let mut header = Header {
+        version: VERSION,
         vault_id,
         created_at: crate::now_unix(),
         argon_m: crypto::ARGON2_MEMORY_KIB,
@@ -955,11 +1014,12 @@ pub fn create(a: CreateArgs) -> Result<()> {
         argon_p: crypto::ARGON2_PARALLELISM,
         salt_voice,
         salt_recovery,
-        passphrase_fp: crypto::sha3_256(a.passphrase_norm.as_bytes()),
+        passphrase_fp: crypto::passphrase_commitment(&salt_voice, &kv),
         emb_dim,
         emb_count,
         threshold_milli: a.threshold_milli,
-        embeddings: a.embeddings.into_iter().take(EMB_SLOTS).collect(),
+        emb_raw,
+        embeddings: emb_vec,
         wrap_voice,
         wrap_recovery,
         meta_nonce: crypto::random_nonce(),
@@ -1023,11 +1083,9 @@ pub fn peek(path: &Path) -> Result<VaultInfo> {
 /// 失败一律返回同一句 `AUTHORIZATION DENIED`，不区分「口令错 / 声纹错」。
 /// 为了不产生时序侧信道，两条校验通路都会**无条件**跑完（不短路）。
 pub fn unlock(path: &Path, passphrase_norm: &str, embedding: &[f32], threshold_milli: u32) -> Result<Unlocked> {
-    let header = Header::read(path)?;
+    let mut header = Header::read(path)?;
 
     // 通路一：口令文本 → K_voice → 解 SRK 包装包
-    let fp = crypto::sha3_256(passphrase_norm.as_bytes());
-    let fp_ok = crypto::ct_eq(&fp, &header.passphrase_fp);
     let k_voice = crypto::argon2id_derive_params(
         &crypto::passphrase_key_material(passphrase_norm, &header.vault_id),
         &header.salt_voice,
@@ -1035,18 +1093,34 @@ pub fn unlock(path: &Path, passphrase_norm: &str, embedding: &[f32], threshold_m
         header.argon_t,
         header.argon_p,
     )?;
-    let srk_res = crypto::unwrap_key(&k_voice.to_array32(), &header.wrap_voice);
+    let kv = k_voice.to_array32();
+    // v1（旧容器）：明文指纹（廉价的离线 oracle）；v2：口令承诺，需 Argon2 输出方可计算。
+    let fp_ok = if header.version >= VERSION {
+        crypto::ct_eq(&crypto::passphrase_commitment(&header.salt_voice, &kv), &header.passphrase_fp)
+    } else {
+        crypto::ct_eq(&crypto::sha3_256(passphrase_norm.as_bytes()), &header.passphrase_fp)
+    };
+    let srk_res = crypto::unwrap_key(&kv, &header.wrap_voice);
     let srk_arr = match &srk_res {
         Ok(k) => *k,
         Err(_) => [0u8; KEY_LEN],
     };
 
-    // 通路二：声纹 1:1 余弦相似度（多槽位取最大）
-    let sim = max_similarity(embedding, &header.embeddings, header.emb_dim);
+    // 通路二：声纹 1:1 余弦相似度（多槽位取最大）。
+    // v2 模板已加密，须先用 K_voice 解出；口令错 → K_emb 错 → 解出的是伪随机数 → 相似度≈0。
+    let embs = if header.version >= VERSION {
+        decrypt_slots(&header.emb_raw, header.emb_dim, header.emb_count, &kv)
+    } else {
+        header.embeddings.clone()
+    };
+    let sim = max_similarity(embedding, &embs, header.emb_dim);
     let voice_ok = sim >= (threshold_milli as f32 / 1000.0);
 
     if !(fp_ok && srk_res.is_ok() && voice_ok) {
         bail!("AUTHORIZATION DENIED");
+    }
+    if header.version >= VERSION {
+        header.embeddings = embs; // 保持解锁后头部内部一致
     }
 
     let meta_key = crypto::sha3_256(&[&srk_arr[..], b"meta".as_slice()].concat());
@@ -1126,10 +1200,17 @@ pub fn reset_voiceprint(
         vault.header.argon_t,
         vault.header.argon_p,
     )?;
-    vault.header.wrap_voice = crypto::wrap_key(&k_voice.to_array32(), &srk_arr)?;
-    vault.header.passphrase_fp = crypto::sha3_256(passphrase_norm.as_bytes());
+    let kv = k_voice.to_array32();
+    vault.header.wrap_voice = crypto::wrap_key(&kv, &srk_arr)?;
+    // v2：承诺 + 加密模板；同时把旧容器升级到 v2（等价于一次安全加固重写）
+    vault.header.version = VERSION;
+    vault.header.passphrase_fp = crypto::passphrase_commitment(&salt_voice, &kv);
     vault.header.emb_count = embeddings.len().min(EMB_SLOTS);
-    vault.header.embeddings = embeddings.into_iter().take(EMB_SLOTS).collect();
+    let emb_vec: Vec<Vec<f32>> = embeddings.into_iter().take(EMB_SLOTS).collect();
+    let mut emb_raw = encode_slots(&emb_vec, vault.header.emb_dim);
+    xor_slots(&mut emb_raw, &kv);
+    vault.header.emb_raw = emb_raw;
+    vault.header.embeddings = emb_vec;
     vault.header.threshold_milli = threshold_milli;
     // 头部重写 + 元数据重加密（AAD 变了）
     vault.save_meta()?;
@@ -1206,4 +1287,87 @@ pub fn purge_temp_dir(tmp_dir: &Path) -> Result<()> {
         let _ = release_temp(&p, tmp_dir);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_path(tag: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("stvault-test-{tag}-{}.stvault", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    fn create_test_vault(path: &Path, emb: &[Vec<f32>]) {
+        create(CreateArgs {
+            path,
+            name: "TEST",
+            passphrase_norm: "open the pod bay doors",
+            embeddings: emb.to_vec(),
+            answer_norm: "fluffy",
+            master: "master-pw",
+            threshold_milli: 650,
+            audit_key: None,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn v2_voiceprint_encrypted_and_unlock_roundtrip() {
+        let path = tmp_path("rt");
+        // 用较高维度贴近真实声纹模型，避免低维随机向量偶然高相似。
+        let dim = 64usize;
+        let e0: Vec<f32> = (0..dim).map(|i| ((i as f32) * 0.10).sin()).collect();
+        let e1: Vec<f32> = (0..dim).map(|i| ((i as f32) * 0.20).cos()).collect();
+        let emb = vec![e0.clone(), e1.clone()];
+        create_test_vault(&path, &emb);
+
+        let h = Header::read(&path).unwrap();
+        assert_eq!(h.version, VERSION);
+        // 磁盘上的声纹槽位不得等于明文（v1 的明文泄漏已修复）。
+        let plain = encode_slots(&emb, h.emb_dim);
+        assert_ne!(&h.emb_raw[..], &plain[..], "声纹模板必须以密文存储");
+
+        // 正确口令 + 正确的第一条声纹 → 解锁成功。
+        assert_eq!(unlock(&path, "open the pod bay doors", &e0, 650).unwrap().vault.name(), "TEST");
+
+        // 错误口令 / 声纹方向相反（余弦 -1）→ 均拒绝。
+        assert!(unlock(&path, "wrong phrase", &e0, 650).is_err());
+        let opposite: Vec<f32> = e0.iter().map(|x| -x).collect();
+        assert!(unlock(&path, "open the pod bay doors", &opposite, 650).is_err());
+
+        // 回归：把磁盘上的（密文）槽位原样当 probe 重放，即使口令正确也不应通过。
+        let mut replay = Vec::with_capacity(h.emb_dim);
+        for j in 0..h.emb_dim {
+            replay.push(f32::from_le_bytes(h.emb_raw[j * 4..j * 4 + 4].try_into().unwrap()));
+        }
+        assert!(unlock(&path, "open the pod bay doors", &replay, 650).is_err());
+
+        // Recovery 通路仍可用；错误主密码被拒。
+        assert_eq!(unlock_with_recovery(&path, "fluffy", "master-pw").unwrap().vault.name(), "TEST");
+        assert!(unlock_with_recovery(&path, "fluffy", "bad").is_err());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reset_voiceprint_reencrypts_and_preserves_data() {
+        let path = tmp_path("reset");
+        let dim = 64usize;
+        let e0: Vec<f32> = (0..dim).map(|i| ((i as f32) * 0.10).sin()).collect();
+        create_test_vault(&path, &[e0.clone()]);
+
+        let mut u = unlock(&path, "open the pod bay doors", &e0, 650).unwrap();
+        let new_emb: Vec<f32> = (0..dim).map(|i| ((i as f32) * 0.30).cos()).collect();
+        reset_voiceprint(&mut u.vault, "new passphrase", vec![new_emb.clone()], 650).unwrap();
+        drop(u);
+
+        // 新声纹可解锁；旧声纹 / 旧口令不再有效。
+        assert_eq!(unlock(&path, "new passphrase", &new_emb, 650).unwrap().vault.name(), "TEST");
+        assert!(unlock(&path, "open the pod bay doors", &e0, 650).is_err());
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

@@ -9,7 +9,7 @@
     "start": "electron .",
     "backend": "bash tools/build.sh",
     "icon": "node tools/mkicon.js",
-    "dist": "electron-builder --mac"
+    "dist": "node tools/mkicon.js && electron-builder --mac"
   },
   "devDependencies": {
     "electron": "^31.7.7",
