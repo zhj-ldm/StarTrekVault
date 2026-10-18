@@ -67,6 +67,9 @@ struct LockRec {
 struct IndexEntry {
     path: String,
     name: String,
+    /// 是否在声纹之后额外要求 Touch ID（第二层准入保险）。旧索引缺省为 false。
+    #[serde(default)]
+    fingerprint: bool,
 }
 
 fn default_language() -> String {
@@ -124,6 +127,8 @@ struct AppState {
     answer_norm: Option<String>,
     master: Option<secmem::SecretBytes>,
     locks: HashMap<String, LockRec>,
+    /// 随机数字挑战的当前期望值（一次解锁会话内有效，成功后清除）。
+    challenge: Option<String>,
 }
 
 impl AppState {
@@ -143,6 +148,7 @@ impl AppState {
             answer_norm: None,
             master: None,
             locks: HashMap::new(),
+            challenge: None,
             data_dir,
         };
         st.load_settings();
@@ -207,13 +213,14 @@ impl AppState {
             .unwrap_or_default()
     }
 
-    fn index_add(&self, path: &Path, name: &str) {
+    fn index_add(&self, path: &Path, name: &str, fingerprint: bool) {
         let p = path.to_string_lossy().into_owned();
         let mut list = self.index();
         if let Some(e) = list.iter_mut().find(|e| e.path == p) {
             e.name = name.to_string();
+            e.fingerprint = fingerprint;
         } else {
-            list.push(IndexEntry { path: p, name: name.to_string() });
+            list.push(IndexEntry { path: p, name: name.to_string(), fingerprint });
         }
         if let Ok(txt) = serde_json::to_string(&list) {
             let _ = std::fs::write(self.index_path(), txt);
@@ -277,6 +284,9 @@ impl AppState {
 
             "recovery.begin" => self.m_recovery_begin(p),
             "recovery.set_voiceprint" => self.m_recovery_set_voiceprint(p),
+
+            "vault.challenge_begin" => self.m_vault_challenge_begin(),
+            "vault.challenge_verify" => self.m_vault_challenge_verify(p),
 
             "wipe.execute" => self.m_wipe_execute(p),
 
@@ -397,6 +407,7 @@ impl AppState {
                 "locked_until": if locked { lk.locked_until_ms / 1000 } else { 0 },
                 "fail_count": lk.fails,
                 "has_voiceprint": has_voiceprint,
+                "fingerprint": e.fingerprint,
             }));
         }
         Ok(json!({ "vaults": out }))
@@ -448,7 +459,8 @@ impl AppState {
             audit_key: self.ak,
         };
         vault::create(args)?;
-        self.index_add(&path, &name);
+        let fingerprint = p.get("fingerprint").and_then(|x| x.as_bool()).unwrap_or(false);
+        self.index_add(&path, &name, fingerprint);
         self.selected = Some(path.clone());
         self.audit
             .append("VAULT_CREATE", &format!("container created: {}", path.display()));
@@ -492,7 +504,14 @@ impl AppState {
                 self.open = Some(u.vault);
                 self.audit
                     .append("UNLOCK", &format!("container unlocked: {}", path.display()));
-                Ok(json!({ "ok": true, "remaining": MAX_FAILS }))
+                // 告知前端该容器是否还需通过 Touch ID 第二层闸门。
+                let fingerprint = self
+                    .index()
+                    .into_iter()
+                    .find(|e| e.path == key)
+                    .map(|e| e.fingerprint)
+                    .unwrap_or(false);
+                Ok(json!({ "ok": true, "remaining": MAX_FAILS, "fingerprint": fingerprint }))
             }
             Err(_) => {
                 // 统一失败文案；按次累计，第 5 次锁定 5 分钟（重启仍生效）。
@@ -519,6 +538,50 @@ impl AppState {
         }
     }
 
+    /// 解锁第二步（防重放）：解锁成功后生成一段 4–8 位随机数字，要求用户当场朗读。
+    /// 期望值保存在 `self.challenge`，只在下一次 `challenge_verify` 前有效。
+    fn m_vault_challenge_begin(&mut self) -> Result<Value> {
+        self.require_open()?;
+        let n = (crypto::random_bytes(1)[0] % 5) as usize + 4; // 4..=8 位
+        let bytes = crypto::random_bytes(n);
+        let code: String = bytes.iter().map(|b| (*b % 10).to_string()).collect();
+        self.challenge = Some(code.clone());
+        Ok(json!({ "ok": true, "code": code }))
+    }
+
+    /// 校验第二步：朗读内容必须等于随机数字，且声纹必须与已解锁的模板匹配。
+    /// - 数字不符：清除挑战，换一组数字即可原地重试（保持容器仍打开）。
+    /// - 声纹不符：判定为非本人，立即回锁（fail-closed）。
+    fn m_vault_challenge_verify(&mut self, p: &Value) -> Result<Value> {
+        let expected = match self.challenge.clone() {
+            Some(c) => c,
+            None => bail!("NO ACTIVE CHALLENGE"),
+        };
+        let text_norm = crypto::normalize_passphrase(&req_str(p, "text_norm")?);
+        let embedding = parse_embedding(p)?;
+        let spoken = digits_from_text(&text_norm);
+        let digits_ok = spoken == expected;
+        let voice_ok = self
+            .require_open()?
+            .voice_matches(&embedding, self.threshold_milli);
+        self.challenge = None;
+        if digits_ok && voice_ok {
+            return Ok(json!({ "ok": true }));
+        }
+        let voice_failed = !voice_ok;
+        if voice_failed {
+            // 非本人声音：回锁，不得停留在已打开状态。
+            self.voice.set_playback(false);
+            self.open = None;
+            self.open_path = None;
+        }
+        Ok(json!({
+            "ok": false,
+            "error": if voice_failed { "VOICEPRINT MISMATCH" } else { "CHALLENGE MISMATCH" },
+            "voice_failed": voice_failed,
+        }))
+    }
+
     fn m_vault_import(&mut self, p: &Value) -> Result<Value> {
         let src = PathBuf::from(req_str(p, "src")?);
         let dest_dir = match p_str(p, "dest_dir") {
@@ -526,7 +589,8 @@ impl AppState {
             _ => default_vaults_dir()?,
         };
         let (path, name) = vault::import_container(&src, &dest_dir)?;
-        self.index_add(&path, &name);
+        let fingerprint = p.get("fingerprint").and_then(|x| x.as_bool()).unwrap_or(false);
+        self.index_add(&path, &name, fingerprint);
         self.audit.append(
             "VAULT_IMPORT",
             &format!("imported container: {} -> {}", src.display(), path.display()),
@@ -1032,6 +1096,58 @@ fn parse_embeddings(p: &Value) -> Result<Vec<Vec<f32>>> {
                 .unwrap_or_default()
         })
         .collect())
+}
+
+/// 从 ASR 归一化文本中抽取连续数字串。
+///
+/// ASR（Paraformer-zh）对「朗读随机数字」可能返回阿拉伯数字（`1234`）、中文数字
+/// （`一二三四`）或英文数字词（`one two three`），因此这里统一映射为 `0-9` 串。
+fn digits_from_text(s: &str) -> String {
+    fn chinese(ch: char) -> Option<char> {
+        Some(match ch {
+            '零' | '〇' | '○' => '0',
+            '一' | '壹' | '幺' => '1',
+            '二' | '贰' | '两' => '2',
+            '三' | '叁' => '3',
+            '四' | '肆' => '4',
+            '五' | '伍' => '5',
+            '六' | '陆' => '6',
+            '七' | '柒' => '7',
+            '八' | '捌' => '8',
+            '九' | '玖' => '9',
+            _ => return None,
+        })
+    }
+    fn english(word: &str) -> Option<char> {
+        Some(match word {
+            "zero" | "zeroth" | "oh" => '0',
+            "one" | "won" => '1',
+            "two" | "to" | "too" => '2',
+            "three" => '3',
+            "four" | "for" | "fore" => '4',
+            "five" => '5',
+            "six" => '6',
+            "seven" => '7',
+            "eight" | "ate" => '8',
+            "nine" => '9',
+            _ => return None,
+        })
+    }
+    let mut out = String::new();
+    for token in s.split_whitespace() {
+        if let Some(d) = english(token) {
+            out.push(d);
+            continue;
+        }
+        for ch in token.chars() {
+            if ch.is_ascii_digit() {
+                out.push(ch);
+            } else if let Some(d) = chinese(ch) {
+                out.push(d);
+            }
+        }
+    }
+    out
 }
 
 fn parse_strs(p: &Value, k: &str) -> Vec<String> {

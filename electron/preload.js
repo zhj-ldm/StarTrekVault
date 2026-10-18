@@ -27,6 +27,8 @@ const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 contextBridge.exposeInMainWorld('stvault', {
   invoke: (method, params) => invoke('stvault:rpc', { method: String(method || ''), params: params || {} }),
   micAuthorize: () => invoke('stvault:mic-authorize', {}),
+  touchIDAvailable: () => invoke('stvault:touchid-available', {}),
+  touchIDPrompt: (reason) => invoke('stvault:touchid-prompt', { reason: String(reason || 'UNLOCK VAULT') }),
   pickVaultPath: (name) => invoke('stvault:pick-vault-path', { name: String(name || '') }),
   pickStvaultFile: () => invoke('stvault:pick-stvault-file', {}),
   pickFiles: (payload) => invoke('stvault:pick-files', payload || {}),

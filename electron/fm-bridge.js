@@ -242,11 +242,15 @@
 
   /* ------------------------------------------------------- voiceprint unlock */
 
-  // Lock-screen state machine:
-  //   idle      -> primary button reads "RECORD"
-  //   recording -> mic is open (voice.listen_begin), primary reads "END & VERIFY"
-  //   busy      -> capture closed, vault.unlock in flight, primary disabled
+  // Lock-screen multi-step state machine:
+  //   step 1  voice passphrase  (voiceprint + spoken code)      button: RECORD
+  //   step 2  read the random digits shown on screen (liveness) button: RECORD DIGITS
+  //   step 3  Touch ID                                          (auto-prompted)
+  // `lockState`: idle -> recording -> busy, per step.
   var lockState = 'idle';
+  var lockStep = 1;
+  var requireFingerprint = false;
+  var challengeCode = '';
 
   function lockError(message) {
     var el = box('lock-error');
@@ -276,6 +280,66 @@
     else btn.classList.remove('is-recording');
   }
 
+  /* ------------------------------------------------- step indicator (1/2/3) */
+
+  // Show only the first `total` steps (2 by default, 3 when Touch ID is on).
+  function setSteps(total) {
+    for (var i = 1; i <= 3; i++) {
+      var el = box('lock-step-' + i);
+      if (!el) continue;
+      el.hidden = i > total;
+      el.style.display = i > total ? 'none' : '';
+    }
+  }
+
+  // Highlight step `n`: earlier steps become "done", later ones stay dim.
+  function markStep(n) {
+    for (var i = 1; i <= 3; i++) {
+      var el = box('lock-step-' + i);
+      if (!el) continue;
+      el.classList.remove('is-active');
+      el.classList.remove('is-done');
+      if (i < n) el.classList.add('is-done');
+      else if (i === n) el.classList.add('is-active');
+    }
+  }
+
+  function showCode(code) {
+    var el = box('lock-code');
+    if (!el) return;
+    if (code) {
+      el.textContent = code;
+      el.hidden = false;
+      el.style.display = '';
+    } else {
+      el.textContent = '';
+      el.hidden = true;
+      el.style.display = 'none';
+    }
+  }
+
+  function stepIdleStatus() {
+    if (lockStep === 2) return t('STEP 2 - READ THE DIGITS ABOVE ALOUD');
+    return t('STANDBY');
+  }
+
+  function stepPrimaryLabel() {
+    return lockStep === 2 ? t('RECORD DIGITS') : 'RECORD';
+  }
+
+  function resetLockFlow() {
+    lockState = 'idle';
+    lockStep = 1;
+    requireFingerprint = false;
+    challengeCode = '';
+    showCode('');
+    setSteps(2);
+    markStep(1);
+    setPrimary('RECORD', false, false);
+    lockStatus(t('STANDBY'));
+    lockError('');
+  }
+
   function deniedMessage(res) {
     if (res && res.locked_until) return t(LOCKED_OUT);
     var remaining = res && typeof res.remaining === 'number' ? res.remaining : 0;
@@ -301,12 +365,14 @@
       .then(function () {
         lockState = 'recording';
         setPrimary('END & VERIFY', true, false);
-        lockStatus(t('LISTENING - SPEAK THE AUTHORIZATION CODE...'));
+        lockStatus(lockStep === 2
+          ? t('LISTENING - READ THE DIGITS ALOUD...')
+          : t('LISTENING - SPEAK THE AUTHORIZATION CODE...'));
       })
       .catch(function (err) {
         lockState = 'idle';
-        setPrimary('RECORD', false, false);
-        lockStatus('STANDBY');
+        setPrimary(stepPrimaryLabel(), false, false);
+        lockStatus(stepIdleStatus());
         lockError(err && err.message ? err.message : DENY);
         play('error');
       });
@@ -316,43 +382,114 @@
     if (lockState !== 'recording') return;
     lockState = 'busy';
     setPrimary(t('VERIFYING AUTHORIZATION...'), false, true);
-    lockStatus(t('VERIFYING AUTHORIZATION...'));
+    lockStatus(lockStep === 2 ? t('VERIFYING DIGITS...') : t('VERIFYING AUTHORIZATION...'));
 
     API.invoke('voice.listen_end', {})
       .then(function (capture) {
         var embedding = capture && capture.embedding;
         if (!embedding || !embedding.length) throw new Error(t('NO SPEECH RECOGNIZED'));
-        return API.invoke('vault.unlock', {
-          passphrase_norm: (capture && capture.text_norm) || '',
-          embedding: embedding
-        });
+        return lockStep === 2
+          ? verifyChallenge(capture, embedding)
+          : verifyPassphrase(capture, embedding);
       })
-      .then(function (res) {
-        if (res && res.ok) {
-          unlocked = true;
-          lockState = 'idle';
-          play('verify');
-          lockError('');
-          lockStatus('STANDBY');
-          showLock(false);
-          setPrimary('RECORD', false, false);
-          if (typeof window.refreshFiles === 'function') window.refreshFiles();
-          return;
-        }
-        throw new Error(deniedMessage(res));
-      })
-      .catch(function (err) {
-        lockState = 'idle';
-        setPrimary('RECORD', false, false);
-        lockStatus('STANDBY');
-        lockError(err && err.message ? err.message : DENY);
-        play('error');
-      });
+      .catch(stepFail);
   }
 
-  // Primary button: RECORD -> begin; END & VERIFY -> finish + unlock.
+  // Step 1: voiceprint + spoken authorization code (vault.unlock).
+  function verifyPassphrase(capture, embedding) {
+    return API.invoke('vault.unlock', {
+      passphrase_norm: (capture && capture.text_norm) || '',
+      embedding: embedding
+    }).then(function (res) {
+      if (!(res && res.ok)) throw new Error(deniedMessage(res));
+      requireFingerprint = !!res.fingerprint;
+      return enterStep2();
+    });
+  }
+
+  // Step 2 entry: ask the backend for a fresh 4-8 digit code and display it.
+  function enterStep2() {
+    lockStep = 2;
+    setSteps(requireFingerprint ? 3 : 2);
+    markStep(2);
+    return API.invoke('vault.challenge_begin', {}).then(function (res) {
+      challengeCode = (res && res.code) || '';
+      showCode(challengeCode);
+      lockState = 'idle';
+      setPrimary(stepPrimaryLabel(), false, false);
+      lockStatus(stepIdleStatus());
+      lockError('');
+      play('chirp');
+    });
+  }
+
+  // Step 2: the spoken digits must equal the shown code AND the voiceprint must
+  // match. On a digit mismatch the backend returns a fresh code so the user can
+  // simply retry; a voiceprint mismatch fails closed and restarts the whole flow.
+  function verifyChallenge(capture, embedding) {
+    return API.invoke('vault.challenge_verify', {
+      text_norm: (capture && capture.text_norm) || '',
+      embedding: embedding
+    }).then(function (res) {
+      if (res && res.ok) return afterStep2();
+      if (res && res.voice_failed) throw new Error(t('VOICEPRINT MISMATCH'));
+      lockError(t('DIGITS DID NOT MATCH - READ THE NEW CODE'));
+      play('error');
+      return enterStep2();
+    });
+  }
+
+  // After step 2: run Touch ID when the container requires it, else finish.
+  function afterStep2() {
+    showCode('');
+    if (!requireFingerprint) return finishUnlock();
+    lockStep = 3;
+    markStep(3);
+    lockState = 'busy';
+    setPrimary(t('TOUCH ID REQUIRED...'), false, true);
+    return confirmFingerprint(true).then(function () { return finishUnlock(); });
+  }
+
+  // Touch ID second factor: only runs when the container was created with it on.
+  // Fails closed - if Touch ID is unavailable or denied, the vault stays locked.
+  function confirmFingerprint(required) {
+    if (!required) return Promise.resolve();
+    if (!API.touchIDAvailable || !API.touchIDPrompt) {
+      throw new Error(t('TOUCH ID UNAVAILABLE - USE RECOVERY ACCESS'));
+    }
+    return API.touchIDAvailable().then(function (ok) {
+      if (!ok) throw new Error(t('TOUCH ID UNAVAILABLE - USE RECOVERY ACCESS'));
+      lockStatus(t('TOUCH ID REQUIRED...'));
+      return API.touchIDPrompt(t('UNLOCK VAULT'));
+    }).then(function (passed) {
+      if (!passed) throw new Error(t('TOUCH ID DENIED'));
+    });
+  }
+
+  function finishUnlock() {
+    unlocked = true;
+    lockState = 'idle';
+    play('verify');
+    lockError('');
+    lockStatus('STANDBY');
+    showLock(false);
+    setPrimary('RECORD', false, false);
+    armAutoLock();
+    if (typeof window.refreshFiles === 'function') window.refreshFiles();
+  }
+
+  // Any failed gate: never leave the container open, reset to step 1.
+  function stepFail(err) {
+    if (!unlocked) API.invoke('vault.lock', {}).catch(function () { /* already locked */ });
+    resetLockFlow();
+    lockError(err && err.message ? err.message : DENY);
+    play('error');
+  }
+
+  // Primary button: step 1 & 2 -> record, then finish + verify.
   function lockPrimary() {
     if (unlocked) return;
+    if (lockStep === 3) return;            // Touch ID dialog owns this step
     if (lockState === 'idle') beginRecording();
     else if (lockState === 'recording') endAndVerify();
     // busy: ignore further clicks until the verify chain settles.
@@ -365,13 +502,14 @@
       API.invoke('voice.listen_cancel', {})
         .catch(function () { /* already finished */ })
         .then(function () {
-          lockState = 'idle';
+          resetLockFlow();
           API.invoke('vault.lock', {}).catch(function () { /* already locked */ });
           API.go('app.html');
         });
       return;
     }
     if (lockState === 'busy') return; // verify in flight; let it finish
+    resetLockFlow();
     API.invoke('vault.lock', {}).catch(function () { /* already locked */ });
     API.go('app.html');
   }
@@ -445,8 +583,10 @@
           return;
         }
         showLock(true);
+        resetLockFlow();
       }, function () {
         showLock(true);
+        resetLockFlow();
       })
       .then(function () {
         var btn = primaryBtn();

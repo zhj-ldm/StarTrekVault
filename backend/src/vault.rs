@@ -399,6 +399,17 @@ impl OpenVault {
         &self.meta.name
     }
 
+    /// 已解锁容器上的 1:1 声纹校验：用解锁时已解密的模板，判断一段嵌入是否本人。
+    /// 用于「随机数字朗读」挑战的第二重门禁（防止重放他人录音）。
+    pub fn voice_matches(&self, embedding: &[f32], threshold_milli: u32) -> bool {
+        let embs = &self.header.embeddings;
+        if embs.is_empty() || embedding.is_empty() {
+            return false;
+        }
+        let sim = max_similarity(embedding, embs, self.header.emb_dim);
+        sim >= (threshold_milli as f32 / 1000.0)
+    }
+
     /// 元数据写回（重新加密并写入元数据区，同步头部 meta_len/meta_nonce/integrity）。
     pub fn save_meta(&mut self) -> Result<()> {
         let json = serde_json::to_vec(&self.meta)?;

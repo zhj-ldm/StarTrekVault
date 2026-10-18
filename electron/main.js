@@ -303,6 +303,22 @@ ipcMain.handle('stvault:mic-authorize', async () => {
   return true;
 });
 
+ipcMain.handle('stvault:touchid-available', () => {
+  if (process.platform !== 'darwin' || typeof systemPreferences.canPromptTouchID !== 'function') return false;
+  try { return systemPreferences.canPromptTouchID(); } catch (err) { return false; }
+});
+
+ipcMain.handle('stvault:touchid-prompt', async (event, payload) => {
+  const reason = (payload && payload.reason) ? String(payload.reason) : 'UNLOCK VAULT';
+  if (process.platform !== 'darwin' || typeof systemPreferences.promptTouchID !== 'function') return false;
+  try {
+    await systemPreferences.promptTouchID(reason);
+    return true;
+  } catch (err) {
+    return false;
+  }
+});
+
 ipcMain.handle('stvault:pick-vault-path', async (event, payload) => {
   const name = (payload && payload.name) ? String(payload.name) : 'VAULT.stvault';
   const result = await dialog.showSaveDialog(win, {

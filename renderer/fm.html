@@ -749,6 +749,64 @@ textarea.fm-preview-text:focus { border-color: #f96; }
   margin: .5em 0 1em;
   letter-spacing: .05em;
 }
+.lock-steps {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: .4em;
+  margin: 0 0 .8em;
+}
+.lock-step {
+  display: inline-flex;
+  align-items: center;
+  gap: .4em;
+  padding: .25em .7em;
+  border-radius: 1em;
+  background: #334;
+  color: #6699cc;
+  font-family: 'LCARSGTJ3', monospace;
+  font-size: .85em;
+  letter-spacing: .04em;
+  opacity: .6;
+}
+.lock-step__n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3em;
+  height: 1.3em;
+  border-radius: 50%;
+  background: #6699cc;
+  color: #000;
+  font-size: .9em;
+}
+.lock-step.is-active {
+  background: #f96;
+  color: #000;
+  opacity: 1;
+}
+.lock-step.is-active .lock-step__n { background: #000; color: #f96; }
+.lock-step.is-done {
+  background: #6699cc;
+  color: #000;
+  opacity: 1;
+}
+.lock-step.is-done .lock-step__n { background: #000; color: #6699cc; }
+.lock-step[hidden] { display: none; }
+.lock-code {
+  margin: 0 auto .8em;
+  padding: .25em .8em;
+  background: #000;
+  border: 1px solid #f96;
+  border-radius: .5em;
+  color: #f96;
+  font-family: 'LCARSGTJ3', monospace;
+  font-size: 2.4em;
+  letter-spacing: .35em;
+  text-indent: .35em;
+  text-align: center;
+}
+.lock-code[hidden] { display: none; }
 .lock-input-row {
   display: grid;
   grid-template-columns: 1.5em 1fr 1.5em;
@@ -944,6 +1002,18 @@ textarea.fm-preview-text:focus { border-color: #f96; }
         <div class="lock-bar-r"></div>
       </div>
       <div class="lock-subtitle">ACCESS RESTRICTED — AUTHORIZED PERSONNEL ONLY</div>
+      <div class="lock-steps" id="lock-steps">
+        <div class="lock-step is-active" id="lock-step-1">
+          <span class="lock-step__n">1</span><span class="lock-step__t">VOICE PASSPHRASE</span>
+        </div>
+        <div class="lock-step" id="lock-step-2">
+          <span class="lock-step__n">2</span><span class="lock-step__t">SPEAK THE DIGITS</span>
+        </div>
+        <div class="lock-step" id="lock-step-3" hidden>
+          <span class="lock-step__n">3</span><span class="lock-step__t">TOUCH ID</span>
+        </div>
+      </div>
+      <div class="lock-code" id="lock-code" hidden></div>
       <div class="lock-input-row">
         <div class="lock-in-l"></div>
         <div class="lock-in-m">

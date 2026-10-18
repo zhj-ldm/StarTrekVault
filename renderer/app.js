@@ -228,6 +228,7 @@
 
     if (name === 'vaults') refreshVaults();
     if (name === 'settings') loadSettings();
+    if (name === 'create') setupCreateFingerprint();
     if (name === 'recovery') $('recovery-path').value = state.recovery.path || '';
   }
 
@@ -609,6 +610,30 @@
     });
   }
 
+  // Touch ID availability for the create form. Called every time the view opens
+  // so it reflects the current machine (sensor present / enrolled).
+  function setupCreateFingerprint() {
+    var cb = $('create-fingerprint');
+    var label = $('create-fingerprint-text');
+    if (!cb) return;
+    cb.checked = false;
+    cb.disabled = true;
+    if (label) label.textContent = t('REQUIRE TOUCH ID');
+    if (!API || typeof API.touchIDAvailable !== 'function') {
+      if (label) label.textContent = t('TOUCH ID NOT AVAILABLE ON THIS DEVICE');
+      return;
+    }
+    API.touchIDAvailable().then(function (ok) {
+      if (ok) {
+        cb.disabled = false;
+      } else if (label) {
+        label.textContent = t('TOUCH ID NOT AVAILABLE ON THIS DEVICE');
+      }
+    }, function () {
+      if (label) label.textContent = t('TOUCH ID NOT AVAILABLE ON THIS DEVICE');
+    });
+  }
+
   function onCreateVault() {
     clearError('create-error');
     var name = $('create-name').value.trim();
@@ -637,12 +662,14 @@
       answer: answer,
       master: master,
       passphrase_norm: createRecorder.getPassphraseNorm(),
-      embeddings: createRecorder.getEmbeddings()
+      embeddings: createRecorder.getEmbeddings(),
+      fingerprint: !!($('create-fingerprint') && $('create-fingerprint').checked)
     }).then(function () {
       createRecorder.reset();
       $('create-name').value = '';
       $('create-path').value = '';
       $('create-master').value = '';
+      if ($('create-fingerprint')) $('create-fingerprint').checked = false;
       showView('vaults');
       restoreLabel(btn);
       createRecorder.sync();
